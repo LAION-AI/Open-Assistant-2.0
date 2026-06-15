@@ -1,0 +1,600 @@
+import { useState, useRef, useEffect, type FormEvent } from "react";
+import { Button } from "./ui/button";
+import { Textarea } from "./ui/textarea";
+import { Markdown } from "./Markdown";
+import {
+  splitThinking,
+  groupConversations,
+  conversationToMessages,
+  conversationTitle,
+  type Conversation,
+  type InteractionLog,
+} from "../lib/chat";
+import {
+  Send,
+  Image as ImageIcon,
+  AlertCircle,
+  Server,
+  Coins,
+  Brain,
+  ChevronDown,
+  Copy,
+  Check,
+  Plus,
+  MessageSquare,
+  Loader2,
+} from "lucide-react";
+
+interface Message {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  image?: string; // base64 string
+  reasoning?: string;
+}
+
+interface User {
+  id: string;
+  username: string;
+  email?: string | null;
+  credits: number;
+  byoeUrl?: string | null;
+  byoeKey?: string | null;
+  byoeModel?: string | null;
+}
+
+interface ChatPanelProps {
+  user: User;
+  onRefreshUser: () => void;
+}
+
+function relativeTime(ts: number): string {
+  const ms = ts > 9999999999 ? ts : ts * 1000;
+  const diff = Date.now() - ms;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(ms).toLocaleDateString();
+}
+
+export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [image, setImage] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [streamingId, setStreamingId] = useState<string | null>(null);
+  const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set());
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Conversation sidebar / history
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  // The active chat's stable id; every turn is logged under it so the backend
+  // groups them into one conversation. Selecting a past chat reuses its id so
+  // new turns append to it rather than starting a new conversation.
+  const [conversationId, setConversationId] = useState<string>(() => crypto.randomUUID());
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isBYOE = !!(user.byoeUrl && user.byoeKey);
+
+  // Auto-scroll to bottom of messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading]);
+
+  const fetchHistory = async () => {
+    setHistoryLoading(true);
+    try {
+      const res = await fetch("/api/chat/history");
+      if (res.ok) {
+        const data = await res.json();
+        setConversations(groupConversations((data.logs || []) as InteractionLog[]));
+      }
+    } catch (err) {
+      // Non-fatal — the sidebar just stays empty.
+      console.warn("Failed to load chat history:", err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchHistory();
+  }, []);
+
+  const newChat = () => {
+    setMessages([]);
+    setError(null);
+    setInput("");
+    setImage(null);
+    setConversationId(crypto.randomUUID());
+  };
+
+  const selectConversation = (conv: Conversation) => {
+    const reconstructed = conversationToMessages(conv).map(m => ({
+      id: crypto.randomUUID(),
+      role: m.role,
+      content: m.content,
+      reasoning: m.reasoning,
+      image: m.image,
+    }));
+    setMessages(reconstructed);
+    // Reuse the chat's id so follow-ups append to it. Legacy rows (no id) get a
+    // fresh id since they can't be appended to retroactively.
+    setConversationId(conv.conversationId || crypto.randomUUID());
+    setError(null);
+    setInput("");
+    setImage(null);
+  };
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        setError("Image size must be under 2MB");
+        return;
+      }
+      setError(null);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImage(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeImage = () => {
+    setImage(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() && !image) return;
+    if (loading) return;
+
+    setError(null);
+    setLoading(true);
+
+    const userMsgId = crypto.randomUUID();
+    const newUserMsg: Message = {
+      id: userMsgId,
+      role: "user",
+      content: input.trim(),
+      image: image || undefined,
+    };
+
+    // Add user message to UI
+    setMessages(prev => [...prev, newUserMsg]);
+    setInput("");
+    setImage(null);
+
+    // Prepare message array for OpenAI API format
+    const apiMessages: any[] = [];
+    messages.forEach(msg => {
+      // Don't replay reasoning back to the model — only the visible answer.
+      const content =
+        msg.role === "assistant" ? splitThinking(msg.content, msg.reasoning).text : msg.content;
+      if (msg.image) {
+        apiMessages.push({
+          role: msg.role,
+          content: [
+            { type: "text", text: content },
+            { type: "image_url", image_url: { url: msg.image } },
+          ],
+        });
+      } else {
+        apiMessages.push({
+          role: msg.role,
+          content,
+        });
+      }
+    });
+
+    // Add the current message
+    if (newUserMsg.image) {
+      apiMessages.push({
+        role: "user",
+        content: [
+          { type: "text", text: newUserMsg.content },
+          { type: "image_url", image_url: { url: newUserMsg.image } },
+        ],
+      });
+    } else {
+      apiMessages.push({
+        role: "user",
+        content: newUserMsg.content,
+      });
+    }
+
+    const assistantMsgId = crypto.randomUUID();
+    setStreamingId(assistantMsgId);
+    setMessages(prev => [...prev, { id: assistantMsgId, role: "assistant", content: "", reasoning: "" }]);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Conversation-Id": conversationId,
+        },
+        body: JSON.stringify({
+          messages: apiMessages,
+          stream: true,
+        }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || `Server responded with status ${response.status}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("Response body is not readable");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || ""; // keep incomplete line in buffer
+
+        for (const line of lines) {
+          const cleanedLine = line.trim();
+          if (!cleanedLine) continue;
+
+          if (cleanedLine.startsWith("data: ")) {
+            const dataStr = cleanedLine.slice(6);
+            if (dataStr === "[DONE]") {
+              break;
+            }
+
+            try {
+              const parsed = JSON.parse(dataStr);
+              const chunk = parsed.choices?.[0]?.delta?.content || "";
+              const reasoningChunk = parsed.choices?.[0]?.delta?.reasoning_content || "";
+              if (chunk || reasoningChunk) {
+                setMessages(prev =>
+                  prev.map(msg =>
+                    msg.id === assistantMsgId
+                      ? {
+                          ...msg,
+                          content: msg.content + chunk,
+                          reasoning: (msg.reasoning || "") + reasoningChunk,
+                        }
+                      : msg
+                  )
+                );
+              }
+            } catch (e) {
+              // Ignore parse errors from malformed stream lines
+            }
+          }
+        }
+      }
+
+      // Refresh credits and the conversation sidebar after a successful response.
+      onRefreshUser();
+      fetchHistory();
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || "Failed to fetch response");
+      // Remove empty assistant message if it failed before streaming
+      setMessages(prev => prev.filter(msg => msg.id !== assistantMsgId));
+    } finally {
+      setLoading(false);
+      setStreamingId(null);
+    }
+  };
+
+  const toggleThinking = (id: string) => {
+    setExpandedThinking(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const copyMessage = (id: string, text: string) => {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(prev => (prev === id ? null : prev)), 1500);
+    });
+  };
+
+  return (
+    <div className="flex h-full bg-card/30 backdrop-blur-md rounded-2xl border border-border/70 overflow-hidden shadow-xl">
+      {/* Conversation Sidebar */}
+      <aside className="hidden md:flex w-72 flex-shrink-0 flex-col border-r border-border/60 bg-card/40">
+        <div className="p-3 border-b border-border/50">
+          <Button
+            onClick={newChat}
+            className="w-full h-10 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white gap-2 text-sm font-semibold shadow-sm"
+          >
+            <Plus className="w-4 h-4" />
+            <span>New chat</span>
+          </Button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          <div className="px-2 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+            Your conversations
+          </div>
+
+          {historyLoading ? (
+            <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Loading…</span>
+            </div>
+          ) : conversations.length === 0 ? (
+            <div className="px-3 py-8 text-center text-xs text-muted-foreground/70 leading-relaxed">
+              No conversations yet. Start chatting and they'll appear here.
+            </div>
+          ) : (
+            conversations.map(conv => {
+              const active = conv.conversationId && conv.conversationId === conversationId;
+              return (
+                <button
+                  key={conv.id}
+                  onClick={() => selectConversation(conv)}
+                  className={`w-full text-left px-3 py-2.5 rounded-xl transition-all group ${
+                    active
+                      ? "bg-indigo-500/15 border border-indigo-500/30"
+                      : "border border-transparent hover:bg-muted/50"
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <MessageSquare
+                      className={`w-3.5 h-3.5 mt-0.5 flex-shrink-0 ${active ? "text-indigo-400" : "text-muted-foreground/60"}`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className={`text-xs font-medium truncate ${active ? "text-foreground" : "text-foreground/85"}`}>
+                        {conversationTitle(conv)}
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground/60">
+                        <span>{conv.turnCount} {conv.turnCount === 1 ? "turn" : "turns"}</span>
+                        <span>·</span>
+                        <span>{relativeTime(conv.updatedAt)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </aside>
+
+      {/* Main Chat Column */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Panel Header */}
+        <div className="flex items-center justify-between px-6 py-3.5 border-b border-border/70 bg-card/50">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0"></div>
+            <span className="font-semibold text-sm text-foreground truncate">
+              {messages.length > 0 ? "Conversation" : "New chat"}
+            </span>
+            {/* New chat button for mobile (sidebar hidden) */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={newChat}
+              className="md:hidden h-7 w-7 text-muted-foreground"
+              title="New chat"
+            >
+              <Plus className="w-4 h-4" />
+            </Button>
+          </div>
+          <div className="flex items-center gap-3 text-xs font-medium flex-shrink-0">
+            {isBYOE ? (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                <Server className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">BYOE Mode</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                <Coins className="w-3.5 h-3.5" />
+                <span>{user.credits}</span>
+                <span className="hidden sm:inline">Credits</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Messages Scroll Area */}
+        <div className="flex-1 px-4 sm:px-6 py-6 overflow-y-auto space-y-6">
+          {messages.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-center p-8 space-y-4 max-w-md mx-auto">
+              <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center border border-indigo-500/20 text-indigo-400">
+                <Server className="w-6 h-6" />
+              </div>
+              <h3 className="font-bold text-lg text-foreground">Crowdsource AI Data</h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">
+                Start chatting. If configured, your queries will run through your custom LLM endpoint, and conversations are safely collected for the training of future open models.
+              </p>
+            </div>
+          ) : (
+            messages
+              .filter(msg => msg.role !== "assistant" || msg.content !== "" || msg.reasoning !== "")
+              .map(msg => {
+                const { thinking, text } = splitThinking(msg.content, msg.reasoning);
+                const isStreaming = streamingId === msg.id;
+                // Auto-open the reasoning panel while it streams; otherwise honor
+                // the user's manual toggle (collapsed by default once finished).
+                const thinkingOpen = isStreaming ? !text : expandedThinking.has(msg.id);
+                const stillThinking = isStreaming && !!thinking && !text;
+
+                if (msg.role === "user") {
+                  return (
+                    <div key={msg.id} className="flex justify-end">
+                      <div className="max-w-[80%] rounded-2xl rounded-br-md bg-indigo-600 text-white px-4 py-3 text-sm leading-relaxed shadow-md">
+                        {msg.image && (
+                          <div className="mb-2 max-w-[200px] overflow-hidden rounded-lg border border-white/10">
+                            <img src={msg.image} alt="Uploaded payload" className="w-full h-auto object-cover" />
+                          </div>
+                        )}
+                        {msg.content && <div className="whitespace-pre-wrap">{msg.content}</div>}
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div key={msg.id} className="flex flex-col items-start gap-1.5 group">
+                    {thinking && (
+                      <div className="w-full max-w-[85%]">
+                        <button
+                          onClick={() => toggleThinking(msg.id)}
+                          className="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-500/8 border border-violet-500/20 hover:bg-violet-500/15 transition-all text-left"
+                        >
+                          <div className="w-5 h-5 rounded-md bg-violet-500/15 flex items-center justify-center flex-shrink-0">
+                            <Brain className={`w-3 h-3 text-violet-400 ${stillThinking ? "animate-pulse" : ""}`} />
+                          </div>
+                          <span className="text-[11px] font-semibold text-violet-300 flex-1">
+                            {stillThinking ? "Thinking…" : "Thinking Process"}
+                          </span>
+                          <span className="text-[9px] text-violet-400/60 font-mono">
+                            {thinking.length.toLocaleString()} chars
+                          </span>
+                          <ChevronDown
+                            className={`w-3.5 h-3.5 text-violet-400/60 transition-transform ${thinkingOpen ? "rotate-180" : ""}`}
+                          />
+                        </button>
+                        {thinkingOpen && (
+                          <div className="mt-1.5 px-3.5 py-3 bg-violet-950/15 border border-violet-500/15 border-l-[3px] border-l-violet-500/40 rounded-xl">
+                            <div className="text-muted-foreground/80 max-h-[320px] overflow-y-auto">
+                              <Markdown compact>{thinking}</Markdown>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {(text || (!thinking && isStreaming)) && (
+                      <div className="max-w-[80%] rounded-2xl rounded-bl-md bg-muted text-foreground border border-border/50 px-4 py-3 shadow-md relative">
+                        <Markdown>{text}</Markdown>
+                        {isStreaming && !text && (
+                          <span className="inline-block w-1.5 h-4 align-middle bg-muted-foreground/60 animate-pulse rounded-sm" />
+                        )}
+                        {!isStreaming && text && (
+                          <button
+                            onClick={() => copyMessage(msg.id, text)}
+                            className="absolute -bottom-3 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 px-2 py-1 rounded-lg bg-card border border-border/60 text-[10px] text-muted-foreground hover:text-foreground shadow-sm"
+                            title="Copy response"
+                          >
+                            {copiedId === msg.id ? (
+                              <><Check className="w-3 h-3 text-emerald-400" /><span>Copied</span></>
+                            ) : (
+                              <><Copy className="w-3 h-3" /><span>Copy</span></>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+          )}
+          {loading && !messages.some(m => m.id === streamingId && (m.content || m.reasoning)) && (
+            <div className="flex justify-start">
+              <div className="bg-muted text-foreground rounded-2xl rounded-bl-none border border-border/50 px-4 py-3 text-sm leading-relaxed shadow-md flex items-center gap-2">
+                <div className="flex gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:-0.3s]"></span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:-0.15s]"></span>
+                  <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground animate-bounce"></span>
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Error / Alert Display */}
+        {error && (
+          <div className="px-6 py-2 bg-destructive/10 border-t border-b border-destructive/20 text-destructive text-xs flex items-center gap-2">
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {/* Image Upload Preview */}
+        {image && (
+          <div className="px-6 py-3 bg-muted/30 border-t border-border/50 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="relative w-12 h-12 rounded-lg border border-border overflow-hidden bg-background">
+                <img src={image} alt="Upload preview" className="w-full h-full object-cover" />
+              </div>
+              <span className="text-xs text-muted-foreground">Payload image attached</span>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={removeImage}
+              className="text-xs text-muted-foreground hover:text-destructive"
+            >
+              Remove
+            </Button>
+          </div>
+        )}
+
+        {/* Input Form Area */}
+        <form
+          onSubmit={handleSubmit}
+          className="px-4 sm:px-6 py-4 border-t border-border/70 bg-card/50 flex items-end gap-3"
+        >
+          <input
+            type="file"
+            accept="image/*"
+            ref={fileInputRef}
+            onChange={handleImageChange}
+            className="hidden"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={() => fileInputRef.current?.click()}
+            className="h-10 w-10 flex-shrink-0 rounded-xl hover:bg-muted/80"
+            title="Attach Image Payload"
+          >
+            <ImageIcon className="w-4 h-4 text-muted-foreground" />
+          </Button>
+
+          <Textarea
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            placeholder="Ask Open Assistant anything..."
+            className="min-h-[40px] max-h-[160px] resize-none py-2 px-3 rounded-xl border border-input focus-visible:ring-1 focus-visible:ring-ring flex-1"
+            onKeyDown={e => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSubmit(e);
+              }
+            }}
+          />
+
+          <Button
+            type="submit"
+            disabled={(!input.trim() && !image) || loading}
+            className="h-10 w-10 flex-shrink-0 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-indigo-600/45 disabled:text-white/60"
+          >
+            <Send className="w-4 h-4" />
+          </Button>
+        </form>
+      </div>
+    </div>
+  );
+}

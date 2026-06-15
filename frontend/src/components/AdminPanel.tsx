@@ -1,0 +1,585 @@
+import { useState, useEffect } from "react";
+import { Markdown } from "./Markdown";
+import {
+  splitThinking,
+  getLastUserMessage,
+  truncateText,
+  parseJsonObject,
+  groupConversations,
+  buildConversationTurns,
+  conversationHasThinking,
+  type Turn,
+  type InteractionLog,
+} from "../lib/chat";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import { Users, FileText, Database, Shield, Coins, Calendar, ChevronDown, ChevronUp, RefreshCw, AlertCircle, Brain, MessageSquare, Code, Eye, EyeOff } from "lucide-react";
+
+interface AdminUser {
+  id: string;
+  username: string;
+  email?: string | null;
+  credits: number;
+  byoeUrl?: string | null;
+  byoeModel?: string | null;
+  isAdmin: number;
+  createdAt: number;
+}
+
+export function AdminPanel() {
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [logs, setLogs] = useState<InteractionLog[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeSubTab, setActiveSubTab] = useState<"users" | "logs">("users");
+  const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
+  const [expandedThinkingKeys, setExpandedThinkingKeys] = useState<Set<string>>(new Set());
+  const [showRawJsonIds, setShowRawJsonIds] = useState<Set<number>>(new Set());
+
+  const fetchData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [usersRes, logsRes] = await Promise.all([
+        fetch("/api/admin/users"),
+        fetch("/api/admin/logs"),
+      ]);
+
+      if (!usersRes.ok) {
+        throw new Error(`Failed to fetch users: ${usersRes.statusText}`);
+      }
+      if (!logsRes.ok) {
+        throw new Error(`Failed to fetch interaction logs: ${logsRes.statusText}`);
+      }
+
+      const usersData = await usersRes.json();
+      const logsData = await logsRes.json();
+
+      setUsers(usersData.users || []);
+      setLogs(logsData.logs || []);
+    } catch (err: any) {
+      console.error("Error fetching admin data:", err);
+      setError(err.message || "Failed to load admin dashboard data");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const parsePrompt = (prompt: string) => parseJsonObject(prompt);
+  const parseResponse = (response: string) => parseJsonObject(response);
+
+  const toggleThinking = (key: string) => {
+    setExpandedThinkingKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const toggleRawJson = (logId: number) => {
+    setShowRawJsonIds(prev => {
+      const next = new Set(prev);
+      if (next.has(logId)) {
+        next.delete(logId);
+      } else {
+        next.add(logId);
+      }
+      return next;
+    });
+  };
+
+  const renderMessageContent = (content: any) => {
+    if (typeof content === "string") {
+      return <span className="whitespace-pre-wrap">{content}</span>;
+    }
+    if (Array.isArray(content)) {
+      return (
+        <div className="space-y-2">
+          {content.map((part: any, pIdx: number) => {
+            if (part.type === "text") {
+              return <span key={pIdx} className="whitespace-pre-wrap">{part.text}</span>;
+            }
+            if (part.type === "image_url") {
+              return (
+                <div key={pIdx} className="mt-1.5 max-w-[120px] rounded-lg overflow-hidden border border-border/60 shadow-sm">
+                  <img src={part.image_url?.url} alt="Attached" className="w-full h-auto" />
+                </div>
+              );
+            }
+            return null;
+          })}
+        </div>
+      );
+    }
+    return <span className="font-mono text-[10px]">{JSON.stringify(content)}</span>;
+  };
+
+  // Collapsible reasoning panel, shared by context and final assistant turns
+  const renderThinking = (key: string, thinkingText: string) => {
+    if (!thinkingText) return null;
+    const isOpen = expandedThinkingKeys.has(key);
+    return (
+      <div className="w-full max-w-[85%] mb-2">
+        <button
+          onClick={(e) => { e.stopPropagation(); toggleThinking(key); }}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-500/8 border border-violet-500/20 hover:bg-violet-500/15 transition-all duration-150 text-left group"
+        >
+          <div className="w-5 h-5 rounded-md bg-violet-500/15 flex items-center justify-center flex-shrink-0">
+            <Brain className="w-3 h-3 text-violet-400" />
+          </div>
+          <span className="text-[10px] font-semibold text-violet-300 flex-1">
+            Thinking Process
+          </span>
+          <span className="text-[9px] text-violet-400/60 font-mono">
+            {thinkingText.length.toLocaleString()} chars
+          </span>
+          <ChevronDown
+            className={`w-3.5 h-3.5 text-violet-400/60 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+          />
+        </button>
+
+        {isOpen && (
+          <div
+            className="mt-1.5 overflow-hidden rounded-xl border-l-[3px] border-violet-500/40"
+            style={{
+              borderImage: "linear-gradient(to bottom, rgb(139 92 246 / 0.5), rgb(99 102 241 / 0.3)) 1",
+              animation: "slideDown 200ms ease-out",
+            }}
+          >
+            <div className="px-3.5 py-3 bg-violet-950/15 border border-violet-500/10 rounded-r-xl">
+              <div className="text-muted-foreground/80 max-h-[400px] overflow-y-auto">
+                <Markdown compact>{thinkingText}</Markdown>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  // Fold per-turn log rows into conversations (one entry per chat).
+  const conversations = groupConversations(logs as InteractionLog[]);
+
+  // Calculate quick stats
+  const totalUsers = users.length;
+  const totalLogs = logs.length;
+  const totalConversations = conversations.length;
+  const totalTokens = logs.reduce((acc, curr) => acc + (curr.tokens || 0), 0);
+
+  const formatTime = (ts: number) => {
+    // Check if timestamp is in seconds or milliseconds
+    const date = new Date(ts > 9999999999 ? ts : ts * 1000);
+    return date.toLocaleString();
+  };
+
+  const getUsername = (userId: string) => {
+    const found = users.find(u => u.id === userId);
+    return found ? found.username : userId.slice(0, 8) + "...";
+  };
+
+  return (
+    <div className="space-y-6 max-w-4xl mx-auto">
+      {/* Dashboard Stats */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card className="bg-card/45 border-border/80 backdrop-blur-md">
+          <CardContent className="p-6 flex items-center justify-between">
+            <div className="space-y-1">
+              <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Total Users</span>
+              <p className="text-3xl font-extrabold text-indigo-400">{totalUsers}</p>
+            </div>
+            <div className="w-12 h-12 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+              <Users className="w-6 h-6" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card/45 border-border/80 backdrop-blur-md">
+          <CardContent className="p-6 flex items-center justify-between">
+            <div className="space-y-1">
+              <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Logged Prompts</span>
+              <p className="text-3xl font-extrabold text-emerald-400">{totalLogs}</p>
+            </div>
+            <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+              <FileText className="w-6 h-6" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-card/45 border-border/80 backdrop-blur-md">
+          <CardContent className="p-6 flex items-center justify-between">
+            <div className="space-y-1">
+              <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Tokens Logged</span>
+              <p className="text-3xl font-extrabold text-amber-400">{totalTokens.toLocaleString()}</p>
+            </div>
+            <div className="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+              <Database className="w-6 h-6" />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Main Admin Section */}
+      <Card className="bg-card/40 border-border/80 backdrop-blur-md shadow-2xl overflow-hidden">
+        <CardHeader className="border-b border-border/50 bg-card/50 flex flex-row items-center justify-between py-4">
+          <div className="space-y-1">
+            <CardTitle className="flex items-center gap-2 text-xl font-bold">
+              <Shield className="w-5 h-5 text-indigo-400" />
+              <span>Admin Dashboard</span>
+            </CardTitle>
+            <CardDescription className="text-xs">
+              Monitor registered users, credits, endpoints, and collected interaction telemetry.
+            </CardDescription>
+          </div>
+          <button
+            onClick={fetchData}
+            disabled={loading}
+            className="p-2 rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground transition-all active:scale-95 disabled:opacity-50"
+            title="Refresh Data"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
+        </CardHeader>
+
+        {/* Sub Navigation */}
+        <div className="flex border-b border-border/40 bg-muted/40 p-1">
+          <button
+            onClick={() => setActiveSubTab("users")}
+            className={`flex-1 py-2.5 text-xs font-semibold rounded-lg transition-all ${
+              activeSubTab === "users"
+                ? "bg-background/80 text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/30"
+            }`}
+          >
+            Registered Users ({totalUsers})
+          </button>
+          <button
+            onClick={() => setActiveSubTab("logs")}
+            className={`flex-1 py-2.5 text-xs font-semibold rounded-lg transition-all ${
+              activeSubTab === "logs"
+                ? "bg-background/80 text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/30"
+            }`}
+          >
+            Conversations ({totalConversations})
+          </button>
+        </div>
+
+        <CardContent className="p-0">
+          {error && (
+            <div className="p-4 bg-destructive/10 border-b border-destructive/20 text-destructive text-xs flex items-center gap-2.5 leading-relaxed">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="p-12 flex flex-col items-center justify-center gap-3">
+              <div className="w-6 h-6 rounded-full border-2 border-indigo-600 border-t-transparent animate-spin"></div>
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">
+                Loading database rows...
+              </span>
+            </div>
+          ) : activeSubTab === "users" ? (
+            /* Users Table */
+            <div className="overflow-x-auto">
+              {users.length === 0 ? (
+                <div className="p-12 text-center text-xs text-muted-foreground">No users registered yet.</div>
+              ) : (
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-border/40 text-[10px] text-muted-foreground font-bold uppercase bg-muted/20">
+                      <th className="px-6 py-3.5">Username</th>
+                      <th className="px-6 py-3.5">Credits</th>
+                      <th className="px-6 py-3.5">BYOE Status</th>
+                      <th className="px-6 py-3.5">Admin</th>
+                      <th className="px-6 py-3.5 text-right">Registered At</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/30 text-xs">
+                    {users.map(u => (
+                      <tr key={u.id} className="hover:bg-muted/10 transition-colors">
+                        <td className="px-6 py-4 font-semibold text-foreground flex items-center gap-1.5">
+                          <span>{u.username}</span>
+                          {u.isAdmin === 1 && (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                              owner
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-muted-foreground font-medium flex items-center gap-1">
+                          <Coins className="w-3.5 h-3.5 text-amber-500/80" />
+                          <span>{u.credits}</span>
+                        </td>
+                        <td className="px-6 py-4">
+                          {u.byoeUrl ? (
+                            <span className="text-indigo-400 font-medium truncate max-w-[180px] block" title={u.byoeUrl}>
+                              {u.byoeModel || "Custom Endpoint"}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground/60 italic">Not configured</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className={u.isAdmin === 1 ? "text-emerald-400 font-semibold" : "text-muted-foreground/60"}>
+                            {u.isAdmin === 1 ? "Yes" : "No"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-right text-muted-foreground">
+                          {u.createdAt ? formatTime(u.createdAt) : "N/A"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          ) : (
+            /* Logs List */
+            <div className="divide-y divide-border/40">
+              {conversations.length === 0 ? (
+                <div className="p-12 text-center text-xs text-muted-foreground">No conversations logged yet.</div>
+              ) : (
+                conversations.map(conv => {
+                  const isExpanded = expandedLogId === conv.id;
+                  const parsedPrompt = parsePrompt(conv.latest.prompt);
+                  const turnCount = conv.turnCount;
+                  const lastUserMsg = getLastUserMessage(conv.latest.prompt);
+                  const thinking = conversationHasThinking(conv);
+                  const isRawJsonVisible = showRawJsonIds.has(conv.id);
+
+                  // Extract model name
+                  let requestModel = "";
+                  if (parsedPrompt && typeof parsedPrompt === "object" && !Array.isArray(parsedPrompt)) {
+                    requestModel = parsedPrompt.model || "";
+                  }
+
+                  // Reconstruct the full thread, backfilling each turn's reasoning
+                  // from its own logged response.
+                  const { systemMsgs, turns } = buildConversationTurns(conv);
+
+                  return (
+                    <div key={conv.id} className="transition-colors">
+                      {/* Summary Row */}
+                      <div
+                        onClick={() => setExpandedLogId(isExpanded ? null : conv.id)}
+                        className="px-5 py-3.5 flex items-center justify-between cursor-pointer select-none hover:bg-muted/10 transition-all duration-150"
+                      >
+                        <div className="flex items-center gap-3 text-xs min-w-0 flex-1">
+                          {/* User */}
+                          <div className="flex items-center gap-1.5 font-semibold text-foreground min-w-[110px] max-w-[140px] truncate flex-shrink-0">
+                            <Users className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+                            <span>{getUsername(conv.userId)}</span>
+                          </div>
+
+                          {/* Model badge */}
+                          {requestModel && (
+                            <div className="px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-[10px] text-indigo-400 font-medium font-mono uppercase truncate max-w-[130px] flex-shrink-0" title={requestModel}>
+                              {requestModel}
+                            </div>
+                          )}
+
+                          {/* Turns badge */}
+                          <div className="flex items-center gap-1 text-[10px] text-cyan-400 bg-cyan-500/10 border border-cyan-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0">
+                            <MessageSquare className="w-3 h-3" />
+                            <span>{turnCount} {turnCount === 1 ? "turn" : "turns"}</span>
+                          </div>
+
+                          {/* Thinking badge */}
+                          {thinking && (
+                            <div className="flex items-center gap-1 text-[10px] text-violet-400 bg-violet-500/10 border border-violet-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0" title="Reasoning / thinking tokens used">
+                              <Brain className="w-3 h-3" />
+                              <span>Thinking</span>
+                            </div>
+                          )}
+
+                          {/* Last user message */}
+                          <div className="text-muted-foreground truncate flex-1 min-w-0 pr-2">
+                            <span className="font-semibold text-foreground/70">Q: </span>
+                            {truncateText(lastUserMsg, 80)}
+                          </div>
+
+                          {/* Token badge */}
+                          <div className="flex items-center gap-1 text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full flex-shrink-0">
+                            <Database className="w-3 h-3" />
+                            <span>{conv.totalTokens} tk</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 text-xs text-muted-foreground pl-3 flex-shrink-0">
+                          <div className="flex items-center gap-1 hidden sm:flex">
+                            <Calendar className="w-3.5 h-3.5" />
+                            <span>{formatTime(conv.updatedAt)}</span>
+                          </div>
+                          <div className="w-5 h-5 rounded-md flex items-center justify-center hover:bg-muted/30 transition-colors">
+                            {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Expanded Detail Panel */}
+                      {isExpanded && (
+                        <div
+                          className="px-5 pb-5 pt-1 bg-muted/10 border-t border-border/20 space-y-4 text-xs leading-relaxed"
+                          style={{ animation: "slideDown 200ms ease-out" }}
+                        >
+                          {/* Conversation Thread */}
+                          <div className="space-y-2">
+                            <div className="flex items-center gap-2 pb-1">
+                              <MessageSquare className="w-3.5 h-3.5 text-indigo-400" />
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">
+                                Conversation Thread
+                              </span>
+                              <span className="text-[10px] text-muted-foreground">
+                                · {turnCount} {turnCount === 1 ? "turn" : "turns"}
+                              </span>
+                              {requestModel && (
+                                <span className="text-[10px] text-muted-foreground font-mono">
+                                  · {requestModel}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="rounded-xl border border-border/40 bg-background/30 p-4 space-y-3 overflow-hidden">
+                              {/* System prompts */}
+                              {systemMsgs.map((msg: any, sIdx: number) => (
+                                <div key={`sys-${sIdx}`} className="w-full">
+                                  <div className="flex items-center gap-1.5 mb-1 px-1">
+                                    <span className="text-[9px] font-bold uppercase tracking-widest text-amber-400/70">
+                                      System
+                                    </span>
+                                  </div>
+                                  <div className="w-full px-3 py-2 bg-amber-500/5 border border-amber-500/15 rounded-lg text-muted-foreground/80 text-[11px] leading-relaxed">
+                                    {renderMessageContent(msg.content)}
+                                  </div>
+                                </div>
+                              ))}
+
+                              {/* Paired user / assistant turns */}
+                              {turns.map((turn: Turn, tIdx: number) => {
+                                const a = turn.assistant;
+                                const split = a
+                                  ? splitThinking(a.content, a.reasoning_content)
+                                  : { thinking: "", text: "" };
+                                const isString = typeof a?.content === "string";
+
+                                return (
+                                  <div
+                                    key={tIdx}
+                                    className={`space-y-2 ${turn.isFinal ? "pt-2 border-t border-border/20" : ""}`}
+                                  >
+                                    {/* User bubble */}
+                                    {turn.user && (
+                                      <div className="flex flex-col items-end">
+                                        <div className="flex items-center gap-1.5 mb-1 px-1">
+                                          <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/60">
+                                            Turn {turn.userTurn}
+                                          </span>
+                                        </div>
+                                        <div className="max-w-[85%] px-3.5 py-2.5 rounded-2xl rounded-br-md bg-indigo-600/20 border border-indigo-500/25 text-foreground/90 text-[11.5px] leading-relaxed">
+                                          {renderMessageContent(turn.user.content)}
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Assistant bubble */}
+                                    {a && (
+                                      <div className="flex flex-col items-start">
+                                        <div className="flex items-center gap-1.5 mb-1.5 px-1">
+                                          <span className={`text-[9px] font-bold uppercase tracking-widest ${turn.isFinal ? "text-emerald-400" : "text-muted-foreground/60"}`}>
+                                            {turn.isFinal ? "Final Response" : "Assistant"}
+                                          </span>
+                                          {turn.isFinal && (
+                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
+                                              ✓ Completed
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        {/* Reasoning / thinking accordion */}
+                                        {renderThinking(`${conv.id}:${tIdx}`, split.thinking)}
+
+                                        {/* Visible answer */}
+                                        {(split.text || !split.thinking) && (
+                                          <div
+                                            className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl rounded-bl-md text-[11.5px] leading-relaxed ${
+                                              turn.isFinal
+                                                ? "bg-emerald-500/8 border border-emerald-500/20 text-foreground/90"
+                                                : "bg-muted/40 border border-border/40 text-foreground/80"
+                                            }`}
+                                          >
+                                            {isString ? (
+                                              <Markdown compact>{split.text}</Markdown>
+                                            ) : (
+                                              renderMessageContent(a.content)
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* Raw JSON Toggle */}
+                          <div className="space-y-2">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); toggleRawJson(conv.id); }}
+                              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/30 border border-border/40 hover:bg-muted/50 transition-all duration-150 text-[10px] font-semibold text-muted-foreground hover:text-foreground group"
+                            >
+                              {isRawJsonVisible ? (
+                                <>
+                                  <EyeOff className="w-3 h-3" />
+                                  <span>Hide Raw Database Records ({conv.logs.length})</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Code className="w-3 h-3" />
+                                  <span>Show Raw Database Records ({conv.logs.length})</span>
+                                </>
+                              )}
+                            </button>
+
+                            {isRawJsonVisible && (
+                              <div style={{ animation: "slideDown 150ms ease-out" }}>
+                                <pre className="p-3 bg-background/60 rounded-xl border border-border/40 overflow-x-auto font-mono text-[10px] leading-normal text-muted-foreground/80 max-h-[300px] overflow-y-auto">
+                                  {JSON.stringify(conv.logs.length === 1 ? conv.logs[0] : conv.logs, null, 2)}
+                                </pre>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Inline keyframe animation */}
+      <style>{`
+        @keyframes slideDown {
+          from {
+            opacity: 0;
+            transform: translateY(-8px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+      `}</style>
+    </div>
+  );
+}

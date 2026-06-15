@@ -14,3 +14,9 @@
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# User data
+user.db
+logs.db
+logs.db-shm
+logs.db-wal
