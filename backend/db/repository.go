@@ -9,6 +9,7 @@ type LogEntry struct {
 	ID             int64           `json:"id"`
 	UserID         string          `json:"userId"`
 	ConversationID string          `json:"conversationId"`
+	Platform       string          `json:"platform"` // "chat" or the external tool (claude-code, opencode, …)
 	Prompt         json.RawMessage `json:"prompt"`
 	Response       json.RawMessage `json:"response"`
 	Tokens         int             `json:"tokens"`
@@ -40,5 +41,9 @@ type LogRepository interface {
 	UpsertLog(ctx context.Context, entry *LogEntry) error
 	GetLogs(ctx context.Context) ([]*LogEntry, error)
 	GetLogsByUser(ctx context.Context, userID string) ([]*LogEntry, error)
+	// DeleteByConversation removes all rows of a conversation owned by the user.
+	DeleteByConversation(ctx context.Context, userID, conversationID string) (int64, error)
+	// DeleteByID removes a single owned log row.
+	DeleteByID(ctx context.Context, userID string, id int64) (int64, error)
 	Close() error
 }

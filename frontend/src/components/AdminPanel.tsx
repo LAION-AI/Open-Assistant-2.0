@@ -391,6 +391,21 @@ export function AdminPanel() {
                             <span>{turnCount} {turnCount === 1 ? "turn" : "turns"}</span>
                           </div>
 
+                          {/* Platform badge */}
+                          {conv.platform && (
+                            <div
+                              className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 border ${
+                                conv.platform === "chat"
+                                  ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
+                                  : "text-sky-400 bg-sky-500/10 border-sky-500/20"
+                              }`}
+                              title="Origin platform"
+                            >
+                              {conv.platform === "chat" ? <MessageSquare className="w-3 h-3" /> : <Code className="w-3 h-3" />}
+                              <span>{conv.platform}</span>
+                            </div>
+                          )}
+
                           {/* Thinking badge */}
                           {thinking && (
                             <div className="flex items-center gap-1 text-[10px] text-violet-400 bg-violet-500/10 border border-violet-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0" title="Reasoning / thinking tokens used">

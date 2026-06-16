@@ -3,6 +3,7 @@ import { registerPasskey, authenticatePasskey, isPasskeySupported } from "./lib/
 import { ChatPanel } from "./components/ChatPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AdminPanel } from "./components/AdminPanel";
+import { UploadsPanel } from "./components/UploadsPanel";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -19,6 +20,7 @@ import {
   Sparkles,
   HelpCircle,
   ShieldAlert,
+  Boxes,
 } from "lucide-react";
 import logo from "./logo.svg";
 import "./index.css";
@@ -41,7 +43,7 @@ export function App() {
   const [authUsername, setAuthUsername] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"chat" | "settings" | "admin">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "uploads" | "settings" | "admin">("chat");
   const [passkeySupported, setPasskeySupported] = useState(true);
   const [isRegistering, setIsRegistering] = useState(false);
 
@@ -266,6 +268,15 @@ export function App() {
                 <span>Chat</span>
               </Button>
               <Button
+                variant={activeTab === "uploads" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setActiveTab("uploads")}
+                className="h-8 rounded-lg px-3 text-xs gap-1.5 font-semibold"
+              >
+                <Boxes className="w-3.5 h-3.5" />
+                <span>Uploads</span>
+              </Button>
+              <Button
                 variant={activeTab === "settings" ? "secondary" : "ghost"}
                 size="sm"
                 onClick={() => setActiveTab("settings")}
@@ -310,7 +321,9 @@ export function App() {
       ) : (
         <main className="flex-1 min-h-0 overflow-y-auto">
           <div className="max-w-4xl w-full mx-auto px-4 py-8">
-            {activeTab === "settings" ? (
+            {activeTab === "uploads" ? (
+              <UploadsPanel />
+            ) : activeTab === "settings" ? (
               <SettingsPanel user={user} onUpdateUser={setUser} />
             ) : (
               <AdminPanel />

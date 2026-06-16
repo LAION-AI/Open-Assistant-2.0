@@ -99,7 +99,10 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
       const res = await fetch("/api/chat/history");
       if (res.ok) {
         const data = await res.json();
-        setConversations(groupConversations((data.logs || []) as InteractionLog[]));
+        // The sidebar is for web chats only; API/tool (V1) sessions live in the
+        // "My Uploads" tab. Legacy rows have no platform — treat them as chat.
+        const all = groupConversations((data.logs || []) as InteractionLog[]);
+        setConversations(all.filter(c => c.platform === "chat" || c.platform === ""));
       }
     } catch (err) {
       // Non-fatal — the sidebar just stays empty.

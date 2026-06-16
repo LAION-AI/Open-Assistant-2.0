@@ -157,6 +157,7 @@ async function proxyChatCompletion(
   user: any,
   reqBody: any,
   conversationId: string | null,
+  platform: string,
 ): Promise<Response> {
   const isBYOE = !!user.byoeUrl;
   if (!isBYOE && user.credits <= 0) {
@@ -171,6 +172,7 @@ async function proxyChatCompletion(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "X-User-Id": user.id,
+    "X-Platform": platform || "api",
   };
   if (conversationId) headers["X-Conversation-Id"] = conversationId;
   if (isBYOE) {
@@ -197,6 +199,28 @@ async function proxyChatCompletion(
     status: 200,
     headers: { "Content-Type": contentType, "Cache-Control": "no-cache", "Connection": "keep-alive" },
   });
+}
+
+// Best-effort identification of which tool a proxied request came from. Honors
+// an explicit X-Platform header, otherwise sniffs the User-Agent.
+function detectPlatform(req: Request): string {
+  const explicit = (req.headers.get("X-Platform") || "").trim();
+  if (explicit) return explicit.slice(0, 40);
+  const ua = (req.headers.get("User-Agent") || "").toLowerCase();
+  if (!ua) return "api";
+  if (ua.includes("claude")) return "claude-code";
+  if (ua.includes("opencode")) return "opencode";
+  if (ua.includes("cursor")) return "cursor";
+  if (ua.includes("copilot") || ua.includes("vscode") || ua.includes("vs code")) return "vscode";
+  if (ua.includes("hermes")) return "hermes";
+  if (ua.includes("continue")) return "continue";
+  if (ua.includes("cline")) return "cline";
+  if (ua.includes("aider")) return "aider";
+  if (ua.includes("openai")) return "openai-sdk";
+  if (ua.includes("python")) return "python";
+  if (ua.includes("curl")) return "curl";
+  if (ua.includes("node")) return "node";
+  return ua.split("/")[0].slice(0, 40) || "api";
 }
 
 // Resolve a user from an `Authorization: Bearer <api key>` header.
@@ -777,6 +801,37 @@ const server = serve({
       }
     },
 
+    // Delete one of the current user's own conversations/logs
+    "/api/chat/delete": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const cookies = parseCookies(req.headers.get("cookie"));
+        const sessionToken = cookies["session"];
+        if (!sessionToken) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const payload = await verifySessionToken(sessionToken);
+        if (!payload) return Response.json({ error: "Invalid session" }, { status: 401 });
+
+        const body = await req.json().catch(() => ({}));
+        const response = await fetch(`${BACKEND_URL}/api/logs/delete`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: payload.userId,
+            conversationId: body?.conversationId || "",
+            id: body?.id || 0,
+          }),
+        });
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`Go backend returned error: ${errText}`);
+        }
+        return Response.json(await response.json());
+      } catch (err: any) {
+        console.error("Error deleting logs:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
     // Chat completions route (web UI, cookie-authenticated)
     "/api/chat": async req => {
       try {
@@ -792,7 +847,7 @@ const server = serve({
         if (!user) return Response.json({ error: "User not found" }, { status: 404 });
 
         const reqBody = await req.json();
-        return proxyChatCompletion(user, reqBody, req.headers.get("X-Conversation-Id"));
+        return proxyChatCompletion(user, reqBody, req.headers.get("X-Conversation-Id"), "chat");
       } catch (err: any) {
         console.error("Error in /api/chat completions proxy:", err);
         return Response.json({ error: err.message }, { status: 500 });
@@ -819,7 +874,7 @@ const server = serve({
         const reqBody = await req.json();
         // Honor a caller-supplied conversation id if present (most tools omit it).
         const conversationId = req.headers.get("X-Conversation-Id");
-        return proxyChatCompletion(user, reqBody, conversationId);
+        return proxyChatCompletion(user, reqBody, conversationId, detectPlatform(req));
       } catch (err: any) {
         console.error("Error in /v1/chat/completions proxy:", err);
         return Response.json({ error: err.message }, { status: 500 });

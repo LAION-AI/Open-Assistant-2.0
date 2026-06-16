@@ -109,7 +109,7 @@ export function hasThinking(response: any): boolean {
  */
 export function buildTurns(
   messages: any[] | null,
-  finalAssistant: { content: any; reasoning?: string } | null,
+  finalAssistant: { content: any; reasoning?: string; toolCalls?: any } | null,
 ): { systemMsgs: any[]; turns: Turn[] } {
   const systemMsgs: any[] = [];
   const turns: Turn[] = [];
@@ -137,11 +137,12 @@ export function buildTurns(
   }
 
   if (finalAssistant) {
-    const finalMsg = {
+    const finalMsg: any = {
       role: "assistant",
       content: finalAssistant.content,
       reasoning_content: finalAssistant.reasoning,
     };
+    if (finalAssistant.toolCalls) finalMsg.tool_calls = finalAssistant.toolCalls;
     const open = openTurn();
     if (open) {
       open.assistant = finalMsg;
@@ -169,12 +170,15 @@ export interface InteractionLog {
   tokens: number;
   createdAt: number;
   conversationId?: string;
+  platform?: string;
 }
 
 export interface Conversation {
   id: number; // id of the representative (latest) row
   userId: string;
   conversationId: string; // stable chat id (empty for legacy rows)
+  platform: string; // origin of the latest turn (chat, claude-code, …)
+  model: string; // model id used for the latest turn
   logs: InteractionLog[]; // member rows, ascending by time (one per turn)
   latest: InteractionLog; // the superset row holding the full history
   createdAt: number; // first turn
@@ -211,10 +215,13 @@ export function isPrefix(short: Sig, long: Sig): boolean {
 /** Assemble a Conversation from its member rows (ascending by time). */
 function toConversation(logs: InteractionLog[]): Conversation {
   const latest = logs[logs.length - 1];
+  const promptObj = parseJsonObject(latest.prompt);
   return {
     id: latest.id,
     userId: latest.userId,
     conversationId: (latest.conversationId || "").trim(),
+    platform: (latest.platform || "").trim(),
+    model: (promptObj?.model || "").trim(),
     logs,
     latest,
     createdAt: logs[0].createdAt,
@@ -301,7 +308,42 @@ export function buildConversationTurns(conv: Conversation): { systemMsgs: any[];
     finalParsed.content ?? (typeof conv.latest.response === "string" ? conv.latest.response : "") ?? "";
   const finalReasoning = finalParsed.reasoning_content || "";
 
-  return buildTurns(messages, { content: finalContent, reasoning: finalReasoning });
+  return buildTurns(messages, {
+    content: finalContent,
+    reasoning: finalReasoning,
+    toolCalls: finalParsed.tool_calls,
+  });
+}
+
+export interface ToolCallView {
+  name: string;
+  /** Parsed arguments object when arguments were valid JSON, else null. */
+  args: any | null;
+  /** Raw argument string. */
+  raw: string;
+  /** A file path if the call looks like a file write. */
+  path?: string;
+  /** File content if the call looks like a file write. */
+  content?: string;
+}
+
+/** Normalize a message's tool_calls into a view model, surfacing created files. */
+export function toolCallsOf(message: any): ToolCallView[] {
+  const calls = message?.tool_calls;
+  if (!Array.isArray(calls)) return [];
+  return calls.map((tc: any) => {
+    const name = tc?.function?.name || tc?.name || "tool";
+    const raw = tc?.function?.arguments ?? tc?.arguments ?? "";
+    let args: any = null;
+    try {
+      args = typeof raw === "string" ? JSON.parse(raw) : raw;
+    } catch {}
+    const path =
+      args?.path || args?.filePath || args?.file || args?.filename || args?.file_path || undefined;
+    const content =
+      args?.content ?? args?.contents ?? args?.code ?? args?.text ?? args?.fileText ?? undefined;
+    return { name, args, raw: typeof raw === "string" ? raw : JSON.stringify(raw), path, content };
+  });
 }
 
 /** Whether any turn in the conversation carries reasoning tokens. */

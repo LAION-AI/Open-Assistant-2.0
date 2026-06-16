@@ -85,6 +85,53 @@ func main() {
 		w.Write(jsonBytes)
 	})
 
+	// Delete a user's own logs (by conversation id or single row id). The Bun
+	// server authenticates the session and supplies the trusted userId.
+	mux.HandleFunc("/api/logs/delete", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var payload struct {
+			UserID         string `json:"userId"`
+			ConversationID string `json:"conversationId"`
+			ID             int64  `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.UserID == "" {
+			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			return
+		}
+
+		var deleted int64
+		var err error
+		if payload.ConversationID != "" {
+			deleted, err = repo.DeleteByConversation(r.Context(), payload.UserID, payload.ConversationID)
+		} else if payload.ID != 0 {
+			deleted, err = repo.DeleteByID(r.Context(), payload.UserID, payload.ID)
+		} else {
+			http.Error(w, "conversationId or id required", http.StatusBadRequest)
+			return
+		}
+		if err != nil {
+			log.Printf("Error deleting logs: %v", err)
+			http.Error(w, fmt.Sprintf("Database error: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"success":true,"deleted":%d}`, deleted)
+	})
+
 	// Log an interaction directly (used for direct local completions bypassing the proxy)
 	mux.HandleFunc("/api/log-interaction", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -105,6 +152,7 @@ func main() {
 		var payload struct {
 			UserID         string `json:"userId"`
 			ConversationID string `json:"conversationId"`
+			Platform       string `json:"platform"`
 			Prompt         string `json:"prompt"`
 			Response       string `json:"response"`
 			Tokens         int    `json:"tokens"`
@@ -118,6 +166,7 @@ func main() {
 		entry := &db.LogEntry{
 			UserID:         payload.UserID,
 			ConversationID: payload.ConversationID,
+			Platform:       payload.Platform,
 			Prompt:         db.ToRawJSON([]byte(payload.Prompt)),
 			Response:       db.ToRawJSON([]byte(payload.Response)),
 			Tokens:         payload.Tokens,

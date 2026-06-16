@@ -34,10 +34,23 @@ type ChatRequest struct {
 	Stream   bool          `json:"stream"`
 }
 
+type ToolCallFunction struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
+}
+
+type ToolCallDelta struct {
+	Index    int              `json:"index"`
+	ID       string           `json:"id,omitempty"`
+	Type     string           `json:"type,omitempty"`
+	Function ToolCallFunction `json:"function"`
+}
+
 type StreamDelta struct {
-	Role             string `json:"role"`
-	Content          string `json:"content"`
-	ReasoningContent string `json:"reasoning_content"`
+	Role             string          `json:"role"`
+	Content          string          `json:"content"`
+	ReasoningContent string          `json:"reasoning_content"`
+	ToolCalls        []ToolCallDelta `json:"tool_calls"`
 }
 
 type StreamChoice struct {
@@ -60,7 +73,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// CORS headers
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-User-Id, X-Conversation-Id, X-BYOE-Url, X-BYOE-Key, X-BYOE-Model")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-User-Id, X-Conversation-Id, X-Platform, X-BYOE-Url, X-BYOE-Key, X-BYOE-Model")
 
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
@@ -80,6 +93,12 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Conversation id groups all turns of one chat together (logging only; not
 	// forwarded upstream to the model).
 	conversationId := r.Header.Get("X-Conversation-Id")
+
+	// Where the request originated: "chat" (web UI) or an external tool.
+	platform := r.Header.Get("X-Platform")
+	if platform == "" {
+		platform = "api"
+	}
 
 	// Read and parse request body to extract the prompt for logging
 	bodyBytes, err := io.ReadAll(r.Body)
@@ -167,9 +186,9 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if chatReq.Stream {
-		handleStream(w, resp.Body, h.Repo, userId, conversationId, string(bodyBytes))
+		handleStream(w, resp.Body, h.Repo, userId, conversationId, platform, string(bodyBytes))
 	} else {
-		handleNonStream(w, resp.Body, h.Repo, userId, conversationId, string(bodyBytes))
+		handleNonStream(w, resp.Body, h.Repo, userId, conversationId, platform, string(bodyBytes))
 	}
 }
 
@@ -199,7 +218,7 @@ func buildUpstreamBody(body []byte, overrideModel string) []byte {
 	return out
 }
 
-func handleStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, userId string, conversationId string, promptRawJson string) {
+func handleStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, userId string, conversationId string, platform string, promptRawJson string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		log.Println("ResponseWriter is not http.Flusher, fallback to basic writing")
@@ -207,6 +226,14 @@ func handleStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, 
 
 	var contentBuilder strings.Builder
 	var reasoningBuilder strings.Builder
+	// Accumulate streamed tool calls by index — this is where the model's created
+	// file content lives (e.g. a write_file call's arguments).
+	type accTool struct {
+		id, typ, name string
+		args          strings.Builder
+	}
+	toolAcc := map[int]*accTool{}
+	var toolOrder []int
 	reader := bufio.NewReader(body)
 
 	for {
@@ -235,8 +262,27 @@ func handleStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, 
 			var chunk StreamChunk
 			if err := json.Unmarshal([]byte(dataStr), &chunk); err == nil {
 				if len(chunk.Choices) > 0 {
-					contentBuilder.WriteString(chunk.Choices[0].Delta.Content)
-					reasoningBuilder.WriteString(chunk.Choices[0].Delta.ReasoningContent)
+					delta := chunk.Choices[0].Delta
+					contentBuilder.WriteString(delta.Content)
+					reasoningBuilder.WriteString(delta.ReasoningContent)
+					for _, tc := range delta.ToolCalls {
+						a := toolAcc[tc.Index]
+						if a == nil {
+							a = &accTool{}
+							toolAcc[tc.Index] = a
+							toolOrder = append(toolOrder, tc.Index)
+						}
+						if tc.ID != "" {
+							a.id = tc.ID
+						}
+						if tc.Type != "" {
+							a.typ = tc.Type
+						}
+						if tc.Function.Name != "" {
+							a.name = tc.Function.Name
+						}
+						a.args.WriteString(tc.Function.Arguments)
+					}
 				}
 			}
 		}
@@ -253,6 +299,26 @@ func handleStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, 
 			"content":           contentStr,
 			"reasoning_content": reasoningStr,
 		}
+
+		// Attach any accumulated tool calls (preserves created file content).
+		toolArgsLen := 0
+		if len(toolOrder) > 0 {
+			toolCalls := make([]map[string]interface{}, 0, len(toolOrder))
+			for _, idx := range toolOrder {
+				a := toolAcc[idx]
+				toolArgsLen += a.args.Len()
+				toolCalls = append(toolCalls, map[string]interface{}{
+					"id":   a.id,
+					"type": a.typ,
+					"function": map[string]interface{}{
+						"name":      a.name,
+						"arguments": a.args.String(),
+					},
+				})
+			}
+			logResponseObj["tool_calls"] = toolCalls
+		}
+
 		responseJsonBytes, err := json.Marshal(logResponseObj)
 		if err != nil {
 			log.Printf("Error marshalling log response: %v", err)
@@ -261,12 +327,13 @@ func handleStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, 
 
 		// Token estimation (1 token per 4 chars)
 		promptTokens := len(promptRawJson) / 4
-		completionTokens := (len(contentStr) + len(reasoningStr)) / 4
+		completionTokens := (len(contentStr) + len(reasoningStr) + toolArgsLen) / 4
 		totalTokens := promptTokens + completionTokens
 
 		err = repo.UpsertLog(context.Background(), &db.LogEntry{
 			UserID:         userId,
 			ConversationID: conversationId,
+			Platform:       platform,
 			Prompt:         db.ToRawJSON([]byte(promptRawJson)),
 			Response:       db.ToRawJSON(responseJsonBytes),
 			Tokens:         totalTokens,
@@ -280,7 +347,7 @@ func handleStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, 
 	}()
 }
 
-func handleNonStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, userId string, conversationId string, promptRawJson string) {
+func handleNonStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, userId string, conversationId string, platform string, promptRawJson string) {
 	respBytes, err := io.ReadAll(body)
 	if err != nil {
 		log.Printf("Error reading non-stream response: %v", err)
@@ -294,9 +361,10 @@ func handleNonStream(w http.ResponseWriter, body io.Reader, repo db.LogRepositor
 		var respObj struct {
 			Choices []struct {
 				Message struct {
-					Role             string `json:"role"`
-					Content          string `json:"content"`
-					ReasoningContent string `json:"reasoning_content"`
+					Role             string          `json:"role"`
+					Content          string          `json:"content"`
+					ReasoningContent string          `json:"reasoning_content"`
+					ToolCalls        json.RawMessage `json:"tool_calls,omitempty"`
 				} `json:"message"`
 			} `json:"choices"`
 		}
@@ -310,12 +378,13 @@ func handleNonStream(w http.ResponseWriter, body io.Reader, repo db.LogRepositor
 			}
 
 			promptTokens := len(promptRawJson) / 4
-			completionTokens := (len(msg.Content) + len(msg.ReasoningContent)) / 4
+			completionTokens := (len(msg.Content) + len(msg.ReasoningContent) + len(msg.ToolCalls)) / 4
 			totalTokens := promptTokens + completionTokens
 
 			err = repo.UpsertLog(context.Background(), &db.LogEntry{
 				UserID:         userId,
 				ConversationID: conversationId,
+				Platform:       platform,
 				Prompt:         db.ToRawJSON([]byte(promptRawJson)),
 				Response:       db.ToRawJSON(responseJsonBytes),
 				Tokens:         totalTokens,

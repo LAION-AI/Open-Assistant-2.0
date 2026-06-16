@@ -15,6 +15,7 @@ import {
   conversationHasThinking,
   conversationToMessages,
   conversationTitle,
+  toolCallsOf,
   type InteractionLog,
 } from "./chat";
 
@@ -442,5 +443,58 @@ describe("conversation reconstruction for reload", () => {
   test("conversationTitle uses the first user message", () => {
     const [conv] = groupConversations([t1, t2]);
     expect(conversationTitle(conv)).toBe("q1");
+  });
+});
+
+describe("tool calls / created files", () => {
+  test("toolCallsOf surfaces a created file's path and content", () => {
+    const msg = {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: "call_1",
+          type: "function",
+          function: {
+            name: "write_file",
+            arguments: JSON.stringify({ path: "spinning-cube.html", content: "<html>cube</html>" }),
+          },
+        },
+      ],
+    };
+    const tools = toolCallsOf(msg);
+    expect(tools).toHaveLength(1);
+    expect(tools[0].name).toBe("write_file");
+    expect(tools[0].path).toBe("spinning-cube.html");
+    expect(tools[0].content).toBe("<html>cube</html>");
+  });
+
+  test("toolCallsOf keeps raw arguments when not valid JSON", () => {
+    const tools = toolCallsOf({
+      tool_calls: [{ function: { name: "f", arguments: "{not json" } }],
+    });
+    expect(tools[0].args).toBeNull();
+    expect(tools[0].raw).toBe("{not json");
+  });
+
+  test("buildConversationTurns carries tool_calls into the final turn", () => {
+    const row: InteractionLog = {
+      id: 1,
+      userId: "u",
+      conversationId: "c1",
+      createdAt: 1,
+      tokens: 5,
+      prompt: { messages: [{ role: "user", content: "make a file" }] },
+      response: {
+        role: "assistant",
+        content: "done",
+        tool_calls: [{ function: { name: "write_file", arguments: '{"path":"a.txt","content":"hi"}' } }],
+      },
+    };
+    const [conv] = groupConversations([row]);
+    const { turns } = buildConversationTurns(conv);
+    const tools = toolCallsOf(turns[0].assistant);
+    expect(tools[0].path).toBe("a.txt");
+    expect(tools[0].content).toBe("hi");
   });
 });
