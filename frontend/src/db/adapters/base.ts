@@ -6,6 +6,7 @@ export interface UserRecord {
   byoeUrl?: string | null;
   byoeKey?: string | null;
   byoeModel?: string | null;
+  apiKey?: string | null;
   isAdmin: number;
 }
 
@@ -24,7 +25,9 @@ export interface StoredCredential {
 export interface DatabaseAdapter {
   getUser(id: string): Promise<UserRecord | null>;
   getUserByUsername(username: string): Promise<UserRecord | null>;
+  getUserByApiKey(apiKey: string): Promise<UserRecord | null>;
   createUser(username: string): Promise<UserRecord>;
+  setApiKey(id: string, apiKey: string | null): Promise<void>;
   updateCredits(id: string, amount: number): Promise<void>;
   updateBYOE(
     id: string,

@@ -36,13 +36,41 @@ func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
 	// is ignored because it's expected ("duplicate column name") once applied.
 	_, _ = db.Exec(`ALTER TABLE interaction_logs ADD COLUMN conversation_id TEXT`)
 
+	// Collapse redundant per-turn rows: keep only the latest (superset) row for
+	// each conversation. Idempotent — a no-op once conversations are single-row.
+	_, _ = db.Exec(`DELETE FROM interaction_logs
+		WHERE conversation_id IS NOT NULL AND conversation_id != ''
+		AND id NOT IN (
+			SELECT MAX(id) FROM interaction_logs
+			WHERE conversation_id IS NOT NULL AND conversation_id != ''
+			GROUP BY user_id, conversation_id
+		)`)
+
 	return &SQLiteRepository{db: db}, nil
 }
 
 func (r *SQLiteRepository) SaveLog(ctx context.Context, entry *LogEntry) error {
 	query := `INSERT INTO interaction_logs (user_id, conversation_id, prompt, response, tokens, created_at) VALUES (?, ?, ?, ?, ?, ?)`
-	_, err := r.db.ExecContext(ctx, query, entry.UserID, entry.ConversationID, entry.Prompt, entry.Response, entry.Tokens, entry.CreatedAt)
+	// Store as TEXT (string) to keep the column's TEXT affinity.
+	_, err := r.db.ExecContext(ctx, query, entry.UserID, entry.ConversationID, string(entry.Prompt), string(entry.Response), entry.Tokens, entry.CreatedAt)
 	return err
+}
+
+func (r *SQLiteRepository) UpsertLog(ctx context.Context, entry *LogEntry) error {
+	// No conversation id (e.g. anonymous): fall back to a plain insert.
+	if entry.ConversationID == "" {
+		return r.SaveLog(ctx, entry)
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE interaction_logs SET prompt = ?, response = ?, tokens = ?, created_at = ? WHERE user_id = ? AND conversation_id = ?`,
+		string(entry.Prompt), string(entry.Response), entry.Tokens, entry.CreatedAt, entry.UserID, entry.ConversationID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return r.SaveLog(ctx, entry)
+	}
+	return nil
 }
 
 func (r *SQLiteRepository) GetLogs(ctx context.Context) ([]*LogEntry, error) {
@@ -65,9 +93,13 @@ func (r *SQLiteRepository) queryLogs(ctx context.Context, query string, args ...
 	var entries []*LogEntry
 	for rows.Next() {
 		var entry LogEntry
-		if err := rows.Scan(&entry.ID, &entry.UserID, &entry.ConversationID, &entry.Prompt, &entry.Response, &entry.Tokens, &entry.CreatedAt); err != nil {
+		var prompt, response string
+		if err := rows.Scan(&entry.ID, &entry.UserID, &entry.ConversationID, &prompt, &response, &entry.Tokens, &entry.CreatedAt); err != nil {
 			return nil, err
 		}
+		// Embed stored text as nested JSON (legacy/non-JSON values are wrapped).
+		entry.Prompt = ToRawJSON([]byte(prompt))
+		entry.Response = ToRawJSON([]byte(response))
 		entries = append(entries, &entry)
 	}
 	return entries, nil

@@ -31,6 +31,7 @@ interface User {
   byoeUrl?: string | null;
   byoeKey?: string | null;
   byoeModel?: string | null;
+  apiKey?: string | null;
   isAdmin: number;
 }
 
@@ -234,7 +235,9 @@ export function App() {
 
   // Authenticated Dashboard view
   return (
-    <div className="h-screen w-full flex flex-col relative z-10 overflow-hidden">
+    // Pinned to the viewport (not `w-full`) so the body's content-sized grid
+    // column can't make the layout widen as streamed text grows.
+    <div className="fixed inset-0 flex flex-col z-10 overflow-hidden">
       {/* Header bar */}
       <header className="w-full border-b border-border/80 bg-background/30 backdrop-blur-md z-50 flex-shrink-0">
         <div className="w-full px-4 h-16 flex items-center justify-between">
@@ -299,21 +302,25 @@ export function App() {
         </div>
       </header>
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-4xl w-full mx-auto px-4 py-8 flex flex-col justify-center">
-        {activeTab === "chat" ? (
+      {/* Main Container — chat fills the viewport; other tabs scroll centered */}
+      {activeTab === "chat" ? (
+        <main className="flex-1 min-h-0 w-full max-w-[1400px] mx-auto px-3 sm:px-4 py-4">
           <ChatPanel user={user} onRefreshUser={fetchUser} />
-        ) : activeTab === "settings" ? (
-          <SettingsPanel user={user} onUpdateUser={setUser} />
-        ) : (
-          <AdminPanel />
-        )}
-      </main>
-
-      {/* Footer info bar */}
-      <footer className="w-full py-4 text-center text-[10px] text-muted-foreground/60 border-t border-border/30 bg-background/10">
-        Open Assistant 2.0 — Crowdsourcing secure interaction dataset for public model training.
-      </footer>
+        </main>
+      ) : (
+        <main className="flex-1 min-h-0 overflow-y-auto">
+          <div className="max-w-4xl w-full mx-auto px-4 py-8">
+            {activeTab === "settings" ? (
+              <SettingsPanel user={user} onUpdateUser={setUser} />
+            ) : (
+              <AdminPanel />
+            )}
+          </div>
+          <footer className="w-full py-4 text-center text-[10px] text-muted-foreground/60 border-t border-border/30 bg-background/10">
+            Open Assistant 2.0 — Crowdsourcing secure interaction dataset for public model training.
+          </footer>
+        </main>
+      )}
     </div>
   );
 }

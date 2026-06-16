@@ -3,7 +3,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { Server, Key, Brain, CheckCircle, HelpCircle, RefreshCw } from "lucide-react";
+import { Server, Key, Brain, CheckCircle, HelpCircle, RefreshCw, Copy, Check, Trash2, Network } from "lucide-react";
 
 interface User {
   id: string;
@@ -13,6 +13,7 @@ interface User {
   byoeUrl?: string | null;
   byoeKey?: string | null;
   byoeModel?: string | null;
+  apiKey?: string | null;
 }
 
 interface SettingsPanelProps {
@@ -29,6 +30,39 @@ export function SettingsPanel({ user, onUpdateUser }: SettingsPanelProps) {
   const [fetchingModels, setFetchingModels] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Data-collection proxy API key
+  const [apiKey, setApiKey] = useState<string | null>(user.apiKey || null);
+  const [keyLoading, setKeyLoading] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const proxyBase = typeof window !== "undefined" ? `${window.location.origin}/v1` : "/v1";
+
+  const copyToClipboard = (field: string, value: string) => {
+    navigator.clipboard?.writeText(value).then(() => {
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(prev => (prev === field ? null : prev)), 1500);
+    });
+  };
+
+  const updateApiKey = async (revoke: boolean) => {
+    setKeyLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/user/apikey", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(revoke ? { revoke: true } : {}),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update API key");
+      setApiKey(data.apiKey);
+      onUpdateUser({ ...user, apiKey: data.apiKey });
+    } catch (err: any) {
+      setError(err.message || "Failed to update API key");
+    } finally {
+      setKeyLoading(false);
+    }
+  };
 
   const fetchModels = async (url: string, key: string) => {
     if (!url) return;
@@ -139,7 +173,8 @@ export function SettingsPanel({ user, onUpdateUser }: SettingsPanelProps) {
   };
 
   return (
-    <Card className="bg-card/40 backdrop-blur-md border border-border/80 shadow-xl overflow-hidden max-w-xl mx-auto">
+    <div className="space-y-6 max-w-xl mx-auto">
+    <Card className="bg-card/40 backdrop-blur-md border border-border/80 shadow-xl overflow-hidden">
       <CardHeader className="border-b border-border/50 bg-card/50">
         <CardTitle className="flex items-center gap-2 text-xl font-bold">
           <Server className="w-5 h-5 text-indigo-400" />
@@ -275,5 +310,123 @@ export function SettingsPanel({ user, onUpdateUser }: SettingsPanelProps) {
         </form>
       </CardContent>
     </Card>
+
+    {/* Data Collection Proxy */}
+    <Card className="bg-card/40 backdrop-blur-md border border-border/80 shadow-xl overflow-hidden">
+      <CardHeader className="border-b border-border/50 bg-card/50">
+        <CardTitle className="flex items-center gap-2 text-xl font-bold">
+          <Network className="w-5 h-5 text-indigo-400" />
+          <span>Data Collection Proxy</span>
+        </CardTitle>
+        <CardDescription className="text-xs leading-relaxed mt-1">
+          Route any OpenAI-compatible tool (VS Code, opencode, Cursor, scripts…) through our proxy.
+          Point the tool at the endpoint below using your personal key — requests are logged for
+          open dataset collection and forwarded to your configured endpoint.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-6 space-y-5">
+        {/* Base URL */}
+        <div className="space-y-2">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Base URL
+          </Label>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 h-11 flex items-center px-3 rounded-xl bg-background/50 border border-input text-sm font-mono text-foreground/90 truncate">
+              {proxyBase}
+            </code>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={() => copyToClipboard("url", proxyBase)}
+              className="h-11 w-11 flex-shrink-0 rounded-xl"
+              title="Copy base URL"
+            >
+              {copiedField === "url" ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+            </Button>
+          </div>
+        </div>
+
+        {/* API Key */}
+        <div className="space-y-2">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            API Key
+          </Label>
+          {apiKey ? (
+            <>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 h-11 flex items-center px-3 rounded-xl bg-background/50 border border-input text-sm font-mono text-foreground/90 truncate">
+                  {apiKey}
+                </code>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={() => copyToClipboard("key", apiKey)}
+                  className="h-11 w-11 flex-shrink-0 rounded-xl"
+                  title="Copy API key"
+                >
+                  {copiedField === "key" ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                </Button>
+              </div>
+              <div className="flex gap-3 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => updateApiKey(false)}
+                  disabled={keyLoading}
+                  className="h-9 rounded-lg text-xs gap-1.5"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${keyLoading ? "animate-spin" : ""}`} />
+                  <span>Regenerate</span>
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => updateApiKey(true)}
+                  disabled={keyLoading}
+                  className="h-9 rounded-lg text-xs gap-1.5 hover:bg-destructive/10 hover:text-destructive hover:border-destructive/20"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Revoke</span>
+                </Button>
+              </div>
+              <p className="text-[10px] text-amber-400/80 leading-relaxed px-1">
+                Treat this like a password. Regenerating invalidates the previous key immediately.
+              </p>
+            </>
+          ) : (
+            <div className="space-y-2">
+              <Button
+                type="button"
+                onClick={() => updateApiKey(false)}
+                disabled={keyLoading}
+                className="h-11 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold gap-2"
+              >
+                <Key className="w-4 h-4" />
+                <span>{keyLoading ? "Generating…" : "Generate API Key"}</span>
+              </Button>
+              <p className="text-[10px] text-muted-foreground/80 leading-relaxed px-1">
+                No key yet. Generate one to start routing external tools through the logging proxy.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Usage hint */}
+        <div className="rounded-xl bg-muted/30 border border-border/50 p-3.5 text-[11px] text-muted-foreground leading-relaxed space-y-1">
+          <div className="font-semibold text-foreground/80">Example (curl):</div>
+          <pre className="overflow-x-auto font-mono text-[10px] text-muted-foreground/90 whitespace-pre-wrap">
+{`curl ${proxyBase}/chat/completions \\
+  -H "Authorization: Bearer ${apiKey || "<your-api-key>"}" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"${byoeModel || user.byoeModel || "<model>"}","messages":[{"role":"user","content":"hi"}]}'`}
+          </pre>
+        </div>
+      </CardContent>
+    </Card>
+    </div>
   );
 }

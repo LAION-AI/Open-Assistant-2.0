@@ -20,6 +20,16 @@ export class DrizzleAdapter implements DatabaseAdapter {
     return res || null;
   }
 
+  async getUserByApiKey(apiKey: string): Promise<UserRecord | null> {
+    if (!apiKey) return null;
+    const res = await this.db.select().from(users).where(eq(users.apiKey, apiKey)).get();
+    return res || null;
+  }
+
+  async setApiKey(id: string, apiKey: string | null): Promise<void> {
+    await this.db.update(users).set({ apiKey }).where(eq(users.id, id)).run();
+  }
+
   async createUser(username: string): Promise<UserRecord> {
     const id = crypto.randomUUID();
     const userCountRes = await this.db.select().from(users).all();
@@ -41,6 +51,7 @@ export class DrizzleAdapter implements DatabaseAdapter {
       byoeUrl: null,
       byoeKey: null,
       byoeModel: null,
+      apiKey: null,
       isAdmin,
     };
   }

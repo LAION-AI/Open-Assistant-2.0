@@ -130,6 +130,83 @@ async function resolveLocalHostIfNecessary(urlStr: string): Promise<string> {
 import { runMigrations } from "./db/migrate";
 runMigrations();
 
+// Fetch the available model ids from a user's OpenAI-compatible endpoint.
+async function resolveModelList(byoeUrl: string, byoeKey?: string | null): Promise<string[]> {
+  const cleaned = byoeUrl.trim().replace(/\/$/, "");
+  const resolved = await resolveLocalHostIfNecessary(cleaned);
+  const modelsUrl = resolved.endsWith("/models") ? resolved : `${resolved}/models`;
+  const headers: Record<string, string> = {};
+  if (byoeKey && byoeKey.trim()) headers["Authorization"] = `Bearer ${byoeKey.trim()}`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    const res = await fetch(modelsUrl, { headers, signal: controller.signal });
+    if (!res.ok) throw new Error(`Failed to fetch models: ${res.statusText}`);
+    const data = await res.json();
+    return Array.isArray(data?.data) ? data.data.map((m: any) => m.id).filter(Boolean) : [];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// Shared chat-completion forwarder used by both the cookie-auth web UI and the
+// API-key proxy for external tools. Resolves the model (client choice wins),
+// routes through the Go logging proxy, and returns the streamed response.
+async function proxyChatCompletion(
+  user: any,
+  reqBody: any,
+  conversationId: string | null,
+): Promise<Response> {
+  const isBYOE = !!user.byoeUrl;
+  if (!isBYOE && user.credits <= 0) {
+    return Response.json({ error: "Out of credits! Please configure BYOE in settings." }, { status: 402 });
+  }
+
+  // Model selection on the fly: explicit request model, else the saved default.
+  const model =
+    (typeof reqBody?.model === "string" && reqBody.model.trim()) || user.byoeModel || "gpt-4o";
+  reqBody.model = model;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-User-Id": user.id,
+  };
+  if (conversationId) headers["X-Conversation-Id"] = conversationId;
+  if (isBYOE) {
+    headers["X-BYOE-Url"] = await resolveLocalHostIfNecessary(user.byoeUrl);
+    if (user.byoeKey) headers["X-BYOE-Key"] = user.byoeKey;
+    // No X-BYOE-Model: the resolved model now travels in the body and is logged.
+  }
+
+  const response = await fetch(`${BACKEND_URL}/v1/chat/completions`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(reqBody),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    return new Response(errText, { status: response.status, headers: { "Content-Type": "text/plain" } });
+  }
+
+  if (!isBYOE) await dbAdapter.updateCredits(user.id, -10);
+
+  const contentType = reqBody?.stream === false ? "application/json" : "text/event-stream";
+  return new Response(response.body, {
+    status: 200,
+    headers: { "Content-Type": contentType, "Cache-Control": "no-cache", "Connection": "keep-alive" },
+  });
+}
+
+// Resolve a user from an `Authorization: Bearer <api key>` header.
+async function userFromApiKey(req: Request): Promise<any | null> {
+  const auth = req.headers.get("Authorization") || "";
+  const key = auth.replace(/^Bearer\s+/i, "").trim();
+  if (!key) return null;
+  return dbAdapter.getUserByApiKey(key);
+}
+
 const server = serve({
   port: PORT,
   // Chat completions can stream for a while (long reasoning); the default 10s
@@ -651,86 +728,116 @@ const server = serve({
       }
     },
 
-    // Chat completions route
+    // List available models for the logged-in user's configured endpoint
+    "/api/models": async req => {
+      try {
+        const cookies = parseCookies(req.headers.get("cookie"));
+        const sessionToken = cookies["session"];
+        if (!sessionToken) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const payload = await verifySessionToken(sessionToken);
+        if (!payload) return Response.json({ error: "Invalid session" }, { status: 401 });
+        const user = await dbAdapter.getUser(payload.userId);
+        if (!user) return Response.json({ error: "User not found" }, { status: 404 });
+
+        if (!user.byoeUrl) {
+          // No custom endpoint — offer the platform default.
+          return Response.json({ models: ["gpt-4o"], default: user.byoeModel || "gpt-4o" });
+        }
+        const models = await resolveModelList(user.byoeUrl, user.byoeKey);
+        return Response.json({ models, default: user.byoeModel || models[0] || "" });
+      } catch (err: any) {
+        console.error("Error listing models:", err);
+        return Response.json({ error: err.message, models: [] }, { status: 200 });
+      }
+    },
+
+    // Generate or revoke the user's data-collection proxy API key
+    "/api/user/apikey": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const cookies = parseCookies(req.headers.get("cookie"));
+        const sessionToken = cookies["session"];
+        if (!sessionToken) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const payload = await verifySessionToken(sessionToken);
+        if (!payload) return Response.json({ error: "Invalid session" }, { status: 401 });
+
+        const body = await req.json().catch(() => ({}));
+        if (body?.revoke) {
+          await dbAdapter.setApiKey(payload.userId, null);
+          return Response.json({ apiKey: null });
+        }
+        // Generate a fresh opaque key.
+        const bytes = crypto.getRandomValues(new Uint8Array(24));
+        const apiKey = "oa-" + Buffer.from(bytes).toString("base64url");
+        await dbAdapter.setApiKey(payload.userId, apiKey);
+        return Response.json({ apiKey });
+      } catch (err: any) {
+        console.error("Error updating API key:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Chat completions route (web UI, cookie-authenticated)
     "/api/chat": async req => {
       try {
         if (req.method !== "POST") {
           return Response.json({ error: "Method not allowed" }, { status: 405 });
         }
-
         const cookies = parseCookies(req.headers.get("cookie"));
         const sessionToken = cookies["session"];
-        if (!sessionToken) {
-          return Response.json({ error: "Unauthorized" }, { status: 401 });
-        }
-
+        if (!sessionToken) return Response.json({ error: "Unauthorized" }, { status: 401 });
         const payload = await verifySessionToken(sessionToken);
-        if (!payload) {
-          return Response.json({ error: "Invalid session" }, { status: 401 });
-        }
-
+        if (!payload) return Response.json({ error: "Invalid session" }, { status: 401 });
         const user = await dbAdapter.getUser(payload.userId);
-        if (!user) {
-          return Response.json({ error: "User not found" }, { status: 404 });
-        }
+        if (!user) return Response.json({ error: "User not found" }, { status: 404 });
 
         const reqBody = await req.json();
-
-        // Check if user has a custom endpoint (key is optional for local hosts)
-        const isBYOE = !!user.byoeUrl;
-        if (!isBYOE && user.credits <= 0) {
-          return Response.json({ error: "Out of credits! Please configure BYOE in settings." }, { status: 402 });
-        }
-
-        // Forward to the Go backend proxy for completions & logging
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-          "X-User-Id": user.id,
-        };
-
-        // Conversation id groups all turns of one chat together for logging.
-        const conversationId = req.headers.get("X-Conversation-Id");
-        if (conversationId) {
-          headers["X-Conversation-Id"] = conversationId;
-        }
-
-        if (isBYOE) {
-          // Resolve local hostnames (e.g. pizero.local) to IP addresses so that Go backend can reach it without DNS resolution failures
-          const resolvedByoeUrl = await resolveLocalHostIfNecessary(user.byoeUrl!);
-          headers["X-BYOE-Url"] = resolvedByoeUrl;
-          if (user.byoeKey) {
-            headers["X-BYOE-Key"] = user.byoeKey;
-          }
-          headers["X-BYOE-Model"] = user.byoeModel || "gpt-4o";
-        }
-
-        console.log(`Forwarding completions to Go proxy: user=${user.id}, BYOE=${isBYOE}`);
-
-        const response = await fetch(`${BACKEND_URL}/v1/chat/completions`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(reqBody),
-        });
-
-        if (!response.ok) {
-          const errText = await response.text();
-          return new Response(errText, { status: response.status, headers: { "Content-Type": "text/plain" } });
-        }
-
-        if (!isBYOE) {
-          await dbAdapter.updateCredits(user.id, -10);
-        }
-
-        return new Response(response.body, {
-          status: 200,
-          headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-          },
-        });
+        return proxyChatCompletion(user, reqBody, req.headers.get("X-Conversation-Id"));
       } catch (err: any) {
         console.error("Error in /api/chat completions proxy:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // OpenAI-compatible proxy endpoint for external tools (VS Code, opencode,
+    // etc.). Authenticated by the user's personal API key; every request is
+    // logged for dataset collection and routed to their configured endpoint.
+    "/v1/chat/completions": async req => {
+      if (req.method === "OPTIONS") {
+        return new Response(null, {
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+          },
+        });
+      }
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const user = await userFromApiKey(req);
+        if (!user) return Response.json({ error: "Invalid API key" }, { status: 401 });
+        const reqBody = await req.json();
+        // Honor a caller-supplied conversation id if present (most tools omit it).
+        const conversationId = req.headers.get("X-Conversation-Id");
+        return proxyChatCompletion(user, reqBody, conversationId);
+      } catch (err: any) {
+        console.error("Error in /v1/chat/completions proxy:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // OpenAI-compatible model listing for external tools (API-key authed)
+    "/v1/models": async req => {
+      try {
+        const user = await userFromApiKey(req);
+        if (!user) return Response.json({ error: "Invalid API key" }, { status: 401 });
+        const ids = user.byoeUrl ? await resolveModelList(user.byoeUrl, user.byoeKey) : ["gpt-4o"];
+        return Response.json({
+          object: "list",
+          data: ids.map(id => ({ id, object: "model", owned_by: "open-assistant" })),
+        });
+      } catch (err: any) {
+        console.error("Error in /v1/models:", err);
         return Response.json({ error: err.message }, { status: 500 });
       }
     },

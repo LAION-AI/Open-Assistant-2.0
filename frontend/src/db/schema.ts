@@ -8,6 +8,7 @@ export const users = sqliteTable("users", {
   byoeUrl: text("byoe_url"),
   byoeKey: text("byoe_key"),
   byoeModel: text("byoe_model"),
+  apiKey: text("api_key"), // personal key for routing external tools through our logging proxy
   isAdmin: integer("is_admin").default(0).notNull(),
   createdAt: integer("created_at").notNull(),
 });

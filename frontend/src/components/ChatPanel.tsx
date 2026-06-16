@@ -71,6 +71,10 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  // Model selection (populated from the endpoint's /v1/models)
+  const [models, setModels] = useState<string[]>([]);
+  const [model, setModel] = useState<string>(user.byoeModel || "");
+
   // Conversation sidebar / history
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
@@ -107,6 +111,16 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
 
   useEffect(() => {
     fetchHistory();
+    // Load the model list for the on-the-fly model picker.
+    fetch("/api/models")
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => {
+        if (d?.models?.length) {
+          setModels(d.models);
+          setModel(prev => prev || d.default || d.models[0] || "");
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const newChat = () => {
@@ -178,25 +192,28 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
     setInput("");
     setImage(null);
 
-    // Prepare message array for OpenAI API format
+    // Prepare message array for OpenAI API format.
     const apiMessages: any[] = [];
     messages.forEach(msg => {
-      // Don't replay reasoning back to the model — only the visible answer.
-      const content =
-        msg.role === "assistant" ? splitThinking(msg.content, msg.reasoning).text : msg.content;
-      if (msg.image) {
+      if (msg.role === "assistant") {
+        // Carry reasoning along as reasoning_content so it's logged for every
+        // turn. The proxy strips it before forwarding to the model.
+        const { thinking, text } = splitThinking(msg.content, msg.reasoning);
+        apiMessages.push({
+          role: "assistant",
+          content: text,
+          ...(thinking ? { reasoning_content: thinking } : {}),
+        });
+      } else if (msg.image) {
         apiMessages.push({
           role: msg.role,
           content: [
-            { type: "text", text: content },
+            { type: "text", text: msg.content },
             { type: "image_url", image_url: { url: msg.image } },
           ],
         });
       } else {
-        apiMessages.push({
-          role: msg.role,
-          content,
-        });
+        apiMessages.push({ role: msg.role, content: msg.content });
       }
     });
 
@@ -230,6 +247,7 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
         body: JSON.stringify({
           messages: apiMessages,
           stream: true,
+          ...(model ? { model } : {}),
         }),
       });
 
@@ -399,6 +417,20 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
             </Button>
           </div>
           <div className="flex items-center gap-3 text-xs font-medium flex-shrink-0">
+            {models.length > 0 && (
+              <select
+                value={model}
+                onChange={e => setModel(e.target.value)}
+                title="Model — switch on the fly"
+                className="h-8 max-w-[200px] rounded-lg border border-border/70 bg-background/60 px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                {models.map(m => (
+                  <option key={m} value={m}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            )}
             {isBYOE ? (
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
                 <Server className="w-3.5 h-3.5" />

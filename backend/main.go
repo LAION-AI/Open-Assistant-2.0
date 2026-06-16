@@ -118,8 +118,8 @@ func main() {
 		entry := &db.LogEntry{
 			UserID:         payload.UserID,
 			ConversationID: payload.ConversationID,
-			Prompt:         payload.Prompt,
-			Response:       payload.Response,
+			Prompt:         db.ToRawJSON([]byte(payload.Prompt)),
+			Response:       db.ToRawJSON([]byte(payload.Response)),
 			Tokens:         payload.Tokens,
 			CreatedAt:      time.Now().Unix(),
 		}

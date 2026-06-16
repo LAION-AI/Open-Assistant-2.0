@@ -102,8 +102,11 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	upstreamUrl := "https://api.openai.com/v1/chat/completions"
 	apiKey := ""
+	overrideModel := ""
 
-	if byoeUrl != "" && byoeKey != "" {
+	// A custom endpoint URL is enough to route as BYOE; the key is optional for
+	// local servers that don't require auth.
+	if byoeUrl != "" {
 		// Clean up custom URL
 		byoeUrl = strings.TrimSuffix(byoeUrl, "/")
 		if !strings.HasSuffix(byoeUrl, "/chat/completions") {
@@ -116,18 +119,15 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			upstreamUrl = byoeUrl
 		}
 		apiKey = byoeKey
-		// Override model in request if specified
-		if byoeModel != "" {
-			chatReq.Model = byoeModel
-			newBodyBytes, err := json.Marshal(chatReq)
-			if err == nil {
-				bodyBytes = newBodyBytes
-				r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-			}
-		}
+		overrideModel = byoeModel
 	}
 
-	req, err := http.NewRequestWithContext(r.Context(), "POST", upstreamUrl, bytes.NewBuffer(bodyBytes))
+	// The body sent upstream strips reasoning_content (kept only in our logs so
+	// every turn's reasoning survives) and applies any BYOE model override,
+	// without dropping other request params. The original bodyBytes is logged.
+	upstreamBytes := buildUpstreamBody(bodyBytes, overrideModel)
+
+	req, err := http.NewRequestWithContext(r.Context(), "POST", upstreamUrl, bytes.NewBuffer(upstreamBytes))
 	if err != nil {
 		http.Error(w, "Failed to create upstream request", http.StatusInternalServerError)
 		return
@@ -171,6 +171,32 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		handleNonStream(w, resp.Body, h.Repo, userId, conversationId, string(bodyBytes))
 	}
+}
+
+// buildUpstreamBody returns a request body for the model: reasoning_content is
+// removed from each message (we only keep it in our own logs), and the model is
+// overridden when provided. Other top-level params are preserved. Falls back to
+// the original body if it isn't valid JSON.
+func buildUpstreamBody(body []byte, overrideModel string) []byte {
+	var m map[string]interface{}
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body
+	}
+	if msgs, ok := m["messages"].([]interface{}); ok {
+		for _, x := range msgs {
+			if msg, ok := x.(map[string]interface{}); ok {
+				delete(msg, "reasoning_content")
+			}
+		}
+	}
+	if overrideModel != "" {
+		m["model"] = overrideModel
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return out
 }
 
 func handleStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, userId string, conversationId string, promptRawJson string) {
@@ -238,11 +264,11 @@ func handleStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, 
 		completionTokens := (len(contentStr) + len(reasoningStr)) / 4
 		totalTokens := promptTokens + completionTokens
 
-		err = repo.SaveLog(context.Background(), &db.LogEntry{
+		err = repo.UpsertLog(context.Background(), &db.LogEntry{
 			UserID:         userId,
 			ConversationID: conversationId,
-			Prompt:         promptRawJson,
-			Response:       string(responseJsonBytes),
+			Prompt:         db.ToRawJSON([]byte(promptRawJson)),
+			Response:       db.ToRawJSON(responseJsonBytes),
 			Tokens:         totalTokens,
 			CreatedAt:      time.Now().Unix(),
 		})
@@ -287,11 +313,11 @@ func handleNonStream(w http.ResponseWriter, body io.Reader, repo db.LogRepositor
 			completionTokens := (len(msg.Content) + len(msg.ReasoningContent)) / 4
 			totalTokens := promptTokens + completionTokens
 
-			err = repo.SaveLog(context.Background(), &db.LogEntry{
+			err = repo.UpsertLog(context.Background(), &db.LogEntry{
 				UserID:         userId,
 				ConversationID: conversationId,
-				Prompt:         promptRawJson,
-				Response:       string(responseJsonBytes),
+				Prompt:         db.ToRawJSON([]byte(promptRawJson)),
+				Response:       db.ToRawJSON(responseJsonBytes),
 				Tokens:         totalTokens,
 				CreatedAt:      time.Now().Unix(),
 			})

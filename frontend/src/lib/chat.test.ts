@@ -13,6 +13,8 @@ import {
   groupConversations,
   buildConversationTurns,
   conversationHasThinking,
+  conversationToMessages,
+  conversationTitle,
   type InteractionLog,
 } from "./chat";
 
@@ -101,6 +103,12 @@ describe("getMessages / getTurnCount", () => {
 
   test("returns null for non-JSON prompts", () => {
     expect(getMessages("just a raw string")).toBeNull();
+  });
+
+  test("accepts an already-parsed object prompt (new backend format)", () => {
+    const obj = { model: "gemma", messages: [{ role: "user", content: "hi" }] };
+    expect(getMessages(obj)).toHaveLength(1);
+    expect(getLastUserMessage(obj)).toBe("hi");
   });
 
   test("counts user messages as turns", () => {
@@ -351,7 +359,7 @@ describe("buildConversationTurns", () => {
     200,
     [
       { role: "user", content: "q1" },
-      { role: "assistant", content: "a1" },
+      { role: "assistant", content: "a1", reasoning_content: "reasoning-1" },
       { role: "user", content: "q2" },
     ],
     { content: "a2", reasoning: "reasoning-2" },
@@ -379,5 +387,60 @@ describe("buildConversationTurns", () => {
   test("conversationHasThinking reflects any turn", () => {
     const [conv] = groupConversations([t1, t2]);
     expect(conversationHasThinking(conv)).toBe(true);
+  });
+});
+
+describe("conversation reconstruction for reload", () => {
+  const t1 = makeLog(1, "user-a", 100, [{ role: "user", content: "q1" }], {
+    content: "a1",
+    reasoning: "r1",
+  }, "conv-A");
+  const t2 = makeLog(
+    2,
+    "user-a",
+    200,
+    [
+      { role: "user", content: "q1" },
+      { role: "assistant", content: "a1", reasoning_content: "r1" },
+      { role: "user", content: "q2" },
+    ],
+    { content: "a2", reasoning: "r2" },
+    "conv-A",
+  );
+
+  test("conversationToMessages produces an alternating, reasoning-preserving thread", () => {
+    const [conv] = groupConversations([t1, t2]);
+    const msgs = conversationToMessages(conv);
+    expect(msgs.map(m => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(msgs[0]).toMatchObject({ role: "user", content: "q1" });
+    expect(msgs[1]).toMatchObject({ role: "assistant", content: "a1", reasoning: "r1" });
+    expect(msgs[3]).toMatchObject({ role: "assistant", content: "a2", reasoning: "r2" });
+  });
+
+  test("conversationToMessages keeps an attached image on a user turn", () => {
+    const withImg = makeLog(
+      9,
+      "user-a",
+      50,
+      [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "what is this" },
+            { type: "image_url", image_url: { url: "data:image/png;base64,XYZ" } },
+          ],
+        },
+      ],
+      { content: "a cat" },
+      "conv-img",
+    );
+    const [conv] = groupConversations([withImg]);
+    const msgs = conversationToMessages(conv);
+    expect(msgs[0]).toMatchObject({ role: "user", content: "what is this", image: "data:image/png;base64,XYZ" });
+  });
+
+  test("conversationTitle uses the first user message", () => {
+    const [conv] = groupConversations([t1, t2]);
+    expect(conversationTitle(conv)).toBe("q1");
   });
 });
