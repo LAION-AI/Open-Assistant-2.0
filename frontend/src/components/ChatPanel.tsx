@@ -10,6 +10,7 @@ import {
   type Conversation,
   type InteractionLog,
 } from "../lib/chat";
+import { loadRedactor, redactMessages } from "../lib/redact";
 import {
   Send,
   Image as ImageIcon,
@@ -23,6 +24,7 @@ import {
   Plus,
   MessageSquare,
   Loader2,
+  ShieldCheck,
 } from "lucide-react";
 
 interface Message {
@@ -70,6 +72,8 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set());
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [redacting, setRedacting] = useState(false);
+  const [redactStatus, setRedactStatus] = useState<string | null>(null);
 
   // Model selection (populated from the endpoint's /v1/models)
   const [models, setModels] = useState<string[]>([]);
@@ -146,9 +150,53 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
     // Reuse the chat's id so follow-ups append to it. Legacy rows (no id) get a
     // fresh id since they can't be appended to retroactively.
     setConversationId(conv.conversationId || crypto.randomUUID());
+    if (conv.model) setModel(conv.model); // preserve model for redaction/replies
     setError(null);
     setInput("");
-    setImage(null);
+    setRedactStatus(null);
+  };
+
+  // Redact PII in the current conversation on-device and persist it.
+  const redactConversation = async () => {
+    if (redacting || loading || messages.length === 0) return;
+    setError(null);
+    setRedacting(true);
+    setRedactStatus("Loading privacy model…");
+    try {
+      const classifier = await loadRedactor(info => {
+        if (info.status === "progress" && typeof info.progress === "number") {
+          setRedactStatus(`Downloading model… ${Math.round(info.progress)}%`);
+        }
+      });
+      setRedactStatus("Redacting…");
+      const { messages: redacted, count } = await redactMessages(messages as any, classifier);
+      setMessages(redacted as any);
+
+      // Persist the redacted conversation (best-effort; needs a saved chat).
+      await fetch("/api/chat/redact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId,
+          model,
+          messages: redacted.map((m: any) => ({
+            role: m.role,
+            content: m.content,
+            reasoning: m.reasoning,
+            image: m.image,
+          })),
+        }),
+      });
+      fetchHistory();
+      setRedactStatus(`Redacted ${count} PII item${count === 1 ? "" : "s"}.`);
+      setTimeout(() => setRedactStatus(null), 4000);
+    } catch (err: any) {
+      console.error(err);
+      setError(`Redaction failed: ${err?.message || err}`);
+      setRedactStatus(null);
+    } finally {
+      setRedacting(false);
+    }
   };
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -420,6 +468,17 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
             </Button>
           </div>
           <div className="flex items-center gap-3 text-xs font-medium flex-shrink-0">
+            {messages.length > 0 && (
+              <button
+                onClick={redactConversation}
+                disabled={redacting || loading}
+                title={redactStatus || "Redact PII in this conversation (on-device) and save"}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/20 hover:bg-violet-500/20 transition-colors disabled:opacity-50"
+              >
+                {redacting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                <span className="hidden sm:inline">{redacting ? "Redacting…" : "Redact"}</span>
+              </button>
+            )}
             {models.length > 0 && (
               <select
                 value={model}
@@ -562,6 +621,14 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
           <div className="px-6 py-2 bg-destructive/10 border-t border-b border-destructive/20 text-destructive text-xs flex items-center gap-2">
             <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
             <span>{error}</span>
+          </div>
+        )}
+
+        {/* Redaction status */}
+        {redactStatus && !error && (
+          <div className="px-6 py-2 bg-violet-500/10 border-t border-b border-violet-500/20 text-violet-300 text-xs flex items-center gap-2">
+            <ShieldCheck className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>{redactStatus}</span>
           </div>
         )}
 

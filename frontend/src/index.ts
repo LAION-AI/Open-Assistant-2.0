@@ -154,6 +154,42 @@ async function resolveModelList(byoeUrl: string, byoeKey?: string | null): Promi
   }
 }
 
+// Reconstruct the stored {prompt, response, tokens} for a conversation from a
+// flat message list (history in prompt, last assistant as response) — shared by
+// trace ingest and redaction so they store identically.
+function buildStoredPayload(model: string, messages: any[]): { prompt: string; response: string; tokens: number } {
+  let history = messages;
+  let finalAssistant: any = { role: "assistant", content: "" };
+  if (messages.length && messages[messages.length - 1]?.role === "assistant") {
+    finalAssistant = messages[messages.length - 1];
+    history = messages.slice(0, -1);
+  }
+  const apiHistory = history.map((m: any) => {
+    if (m.role === "assistant") {
+      return { role: "assistant", content: m.content || "", ...(m.reasoning ? { reasoning_content: m.reasoning } : {}) };
+    }
+    if (m.image) {
+      return {
+        role: m.role,
+        content: [
+          { type: "text", text: m.content || "" },
+          { type: "image_url", image_url: { url: m.image } },
+        ],
+      };
+    }
+    return { role: m.role, content: m.content || "" };
+  });
+  const prompt = JSON.stringify({ model: model || "trace", messages: apiHistory });
+  const response = JSON.stringify({
+    role: "assistant",
+    content: finalAssistant.content || "",
+    reasoning_content: finalAssistant.reasoning || "",
+    ...(finalAssistant.tool_calls ? { tool_calls: finalAssistant.tool_calls } : {}),
+  });
+  const tokens = Math.floor((prompt.length + response.length) / 4);
+  return { prompt, response, tokens };
+}
+
 // Parse an OpenCode SQLite database (newer versions store sessions in
 // ~/.local/share/opencode/opencode.db) into preview-able trace objects.
 function parseOpencodeDb(dbPath: string): any[] {
@@ -930,23 +966,7 @@ const server = serve({
           const messages: any[] = Array.isArray(tr?.messages) ? tr.messages : [];
           if (messages.length === 0) continue;
 
-          // Last assistant message becomes the logged "response"; the rest is the
-          // prompt history — mirrors how live turns are stored.
-          let history = messages;
-          let finalAssistant: any = { role: "assistant", content: "" };
-          if (messages[messages.length - 1]?.role === "assistant") {
-            finalAssistant = messages[messages.length - 1];
-            history = messages.slice(0, -1);
-          }
-
-          const prompt = JSON.stringify({ model: tr.model || "trace", messages: history });
-          const response = JSON.stringify({
-            role: "assistant",
-            content: finalAssistant.content || "",
-            reasoning_content: finalAssistant.reasoning || "",
-            ...(finalAssistant.tool_calls ? { tool_calls: finalAssistant.tool_calls } : {}),
-          });
-          const tokens = Math.floor((prompt.length + response.length) / 4);
+          const { prompt, response, tokens } = buildStoredPayload(tr.model, messages);
 
           // Mark uploads with a `trace:` prefix so they're distinguishable from
           // live V1-proxy sessions of the same tool (e.g. trace:claude-code).
@@ -970,6 +990,40 @@ const server = serve({
         return Response.json({ saved });
       } catch (err: any) {
         console.error("Error uploading traces:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Persist a redacted version of a conversation (rewrites its stored content).
+    "/api/chat/redact": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const cookies = parseCookies(req.headers.get("cookie"));
+        const sessionToken = cookies["session"];
+        if (!sessionToken) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const payload = await verifySessionToken(sessionToken);
+        if (!payload) return Response.json({ error: "Invalid session" }, { status: 401 });
+
+        const body = await req.json().catch(() => ({}));
+        const conversationId = (body?.conversationId || "").toString();
+        const messages: any[] = Array.isArray(body?.messages) ? body.messages : [];
+        if (!conversationId || messages.length === 0) {
+          return Response.json({ error: "conversationId and messages required" }, { status: 400 });
+        }
+
+        const { prompt, response, tokens } = buildStoredPayload(body?.model || "", messages);
+        const res = await fetch(`${BACKEND_URL}/api/logs/update`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: payload.userId, conversationId, prompt, response, tokens }),
+        });
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`Go backend returned error: ${errText}`);
+        }
+        return Response.json(await res.json());
+      } catch (err: any) {
+        console.error("Error redacting conversation:", err);
         return Response.json({ error: err.message }, { status: 500 });
       }
     },

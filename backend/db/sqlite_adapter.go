@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 
 	_ "modernc.org/sqlite" // Pure Go SQLite driver
@@ -179,6 +180,17 @@ func (r *SQLiteRepository) DeleteByConversation(ctx context.Context, userID, con
 func (r *SQLiteRepository) DeleteByID(ctx context.Context, userID string, id int64) (int64, error) {
 	res, err := r.db.ExecContext(ctx,
 		`DELETE FROM interaction_logs WHERE user_id = ? AND id = ?`, userID, id)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+func (r *SQLiteRepository) UpdateContent(ctx context.Context, userID, conversationID string, prompt, response json.RawMessage, tokens int) (int64, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE interaction_logs SET prompt = ?, response = ?, tokens = ? WHERE user_id = ? AND conversation_id = ?`,
+		string(prompt), string(response), tokens, userID, conversationID)
 	if err != nil {
 		return 0, err
 	}

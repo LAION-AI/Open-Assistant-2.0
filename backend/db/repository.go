@@ -49,5 +49,8 @@ type LogRepository interface {
 	DeleteByConversation(ctx context.Context, userID, conversationID string) (int64, error)
 	// DeleteByID removes a single owned log row.
 	DeleteByID(ctx context.Context, userID string, id int64) (int64, error)
+	// UpdateContent rewrites the prompt/response/tokens of an owned conversation
+	// (used by redaction), leaving platform and timestamps untouched.
+	UpdateContent(ctx context.Context, userID, conversationID string, prompt, response json.RawMessage, tokens int) (int64, error)
 	Close() error
 }

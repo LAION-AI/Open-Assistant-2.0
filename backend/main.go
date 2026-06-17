@@ -139,6 +139,45 @@ func main() {
 		fmt.Fprintf(w, `{"success":true,"deleted":%d}`, deleted)
 	})
 
+	// Update a conversation's stored content (used by client-side redaction).
+	mux.HandleFunc("/api/logs/update", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var payload struct {
+			UserID         string `json:"userId"`
+			ConversationID string `json:"conversationId"`
+			Prompt         string `json:"prompt"`
+			Response       string `json:"response"`
+			Tokens         int    `json:"tokens"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.UserID == "" || payload.ConversationID == "" {
+			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			return
+		}
+
+		n, err := repo.UpdateContent(r.Context(), payload.UserID, payload.ConversationID,
+			db.ToRawJSON([]byte(payload.Prompt)), db.ToRawJSON([]byte(payload.Response)), payload.Tokens)
+		if err != nil {
+			log.Printf("Error updating log content: %v", err)
+			http.Error(w, fmt.Sprintf("Database error: %v", err), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"success":true,"updated":%d}`, n)
+	})
+
 	// Log an interaction directly (used for direct local completions bypassing the proxy)
 	mux.HandleFunc("/api/log-interaction", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
