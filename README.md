@@ -23,7 +23,7 @@ User interaction data — the prompts you type, the follow-ups you send, the ima
 
 > This is the spiritual successor to [Open Assistant](https://github.com/LAION-AI/Open-Assistant), rebuilt from scratch with a modern stack.
 
-> **Your privacy matters.** All collected interaction data goes through a filtering pipeline before any public release — personally identifiable information (PII) and legally non-compliant content are removed. We will never publish raw, unfiltered conversation logs.
+> **Your privacy matters.** You can redact personally identifiable information (PII) **on your own device** — directly in the chat and before uploading traces — using a local model that never sends your text anywhere. All collected interaction data also goes through a filtering pipeline before any public release. We will never publish raw, unfiltered conversation logs.
 
 ---
 
@@ -31,10 +31,18 @@ User interaction data — the prompts you type, the follow-ups you send, the ima
 
 | Feature | Status | Description |
 |---|---|---|
-| 🔐 Passkey Authentication | 🚧 In Progress | Passwordless login via [SimpleWebAuthn](https://simplewebauthn.dev/) — phishing-resistant, no passwords to leak |
-| 💬 Browser Chat | 🚧 In Progress | Simple Q&A chat with image upload support |
-| 🔌 BYOE (Bring Your Own Endpoint) | 📋 Planned | Users add their own v1-compatible endpoint — donating both interaction data **and** compute |
-| 🎟️ Hosted API Access | 📋 Planned | API token + hosted endpoint for users who contribute credits or donations |
+| 🔐 Passkey Authentication | ✅ Done | Passwordless login via [SimpleWebAuthn](https://simplewebauthn.dev/) — phishing-resistant, no passwords to leak |
+| 💬 Browser Chat | ✅ Done | Streaming chat with image upload, Markdown + math (KaTeX), and a collapsible reasoning/"thinking" view |
+| 🗂️ Conversation History | ✅ Done | Sidebar of past chats — resume any conversation and follow-up turns append to it |
+| 🔀 On-the-fly Model Switching | ✅ Done | Pick any model from your endpoint's `/v1/models` per message |
+| 🔌 BYOE (Bring Your Own Endpoint) | ✅ Done | Add any OpenAI v1-compatible endpoint (key optional for local servers) — donate interaction data **and** compute |
+| 🛰️ V1 Proxy for External Tools | ✅ Done | A personal API key + OpenAI-compatible endpoint so VS Code Copilot, opencode, Claude Code, etc. route through the logging proxy |
+| 🧩 "Add to VS Code" | ✅ Done | One-click setup helper that lists your models and walks through the secure VS Code custom-endpoint flow |
+| 📥 Local Trace Import | ✅ Done | Import existing agent sessions — Claude Code, VS Code Copilot Chat, and OpenCode (SQLite) — with local parsing, preview & per-conversation select |
+| 🛡️ On-Device PII Redaction | ✅ Done | Redact names/emails/phones/etc. locally with [`openai/privacy-filter`](https://huggingface.co/openai/privacy-filter) via [Transformers.js](https://github.com/huggingface/transformers.js) (WebGPU/WASM) — in chat and before trace upload |
+| 📦 My Uploads | ✅ Done | Per-user view of your contributions (Chat / V1 Proxy / Local traces) with preview and delete |
+| 🛡️ Admin Dashboard | ✅ Done | Users + conversations with category filters and pagination |
+| 🌗 Theme Toggle | ✅ Done | System → dark → light |
 | 📊 Open Dataset Export | 📋 Planned | Anonymized, exportable interaction logs for model training |
 
 ---
@@ -68,21 +76,23 @@ The system is a reverse-proxy gateway with a React frontend and a Go backend, st
 
 ```
 .
+├── start-dev.sh              # Starts backend (8080) + frontend (3000) together
 ├── backend/                  # Go proxy & interaction logger
 │   ├── db/
 │   │   ├── repository.go     # Database adapter interface
-│   │   └── sqlite_adapter.go # SQLite implementation
-│   ├── main.go               # HTTP server & initializer
-│   └── proxy/                # OpenAI v1 stream proxy logic
+│   │   └── sqlite_adapter.go # SQLite implementation (logs, pagination, redaction updates)
+│   ├── main.go               # HTTP server & log/admin endpoints
+│   └── proxy/                # OpenAI v1 stream proxy (logging, tool-call capture)
 ├── frontend/                 # Bun + React + Shadcn app
 │   ├── src/
-│   │   ├── App.tsx           # Main application component
-│   │   ├── index.ts          # Bun HTTP server with HMR
-│   │   ├── db/
-│   │   │   ├── schema.ts     # Drizzle schema (users, credentials)
-│   │   │   ├── client.ts     # Database client instantiation
-│   │   │   └── adapters/     # Swappable storage backends
-│   │   └── components/       # Shadcn UI components
+│   │   ├── App.tsx           # Shell, tabs (Chat / Uploads / BYOE / Admin), theme
+│   │   ├── index.ts          # Bun HTTP server: auth, chat proxy, V1 proxy, traces
+│   │   ├── db/               # Drizzle schema + swappable storage adapters
+│   │   ├── lib/
+│   │   │   ├── chat.ts        # Conversation grouping / reconstruction
+│   │   │   ├── traces.ts      # Trace parsing (Claude Code / VS Code / OpenCode)
+│   │   │   └── redact.ts      # On-device PII redaction (Transformers.js)
+│   │   └── components/        # ChatPanel, UploadsPanel, AdminPanel, TraceUpload, …
 │   └── package.json
 ├── LICENSE                   # Apache 2.0
 └── README.md
@@ -97,13 +107,28 @@ The system is a reverse-proxy gateway with a React frontend and a Go backend, st
 ### Prerequisites
 
 - [Bun](https://bun.sh/) ≥ 1.0
-- [Go](https://go.dev/) ≥ 1.21 (for backend, when implemented)
+- [Go](https://go.dev/) ≥ 1.21
 
-### Run the Frontend
+### Run everything (recommended)
+
+From the repo **root**:
 
 ```sh
 git clone https://github.com/LAION-AI/Open-Assistant-2.0.git
-cd Open-Assistant-2.0/frontend
+cd Open-Assistant-2.0
+sh start-dev.sh
+```
+
+`start-dev.sh` starts **everything you need**: it builds & launches the Go proxy backend (port **8080**) and the Bun frontend dev server (port **3000**) together, and stops both on `Ctrl+C`. Then open **http://localhost:3000**.
+
+> **macOS note:** the first time, approve the system **"Local Network"** prompt for the backend so it can reach LAN model servers (e.g. `192.168.x.x`). Without it you'll see `502 / no route to host` on chat even though "fetch models" works.
+
+### Run the frontend only
+
+If you just want the UI (e.g. against an already-running backend):
+
+```sh
+cd frontend
 bun install
 bun dev
 ```
@@ -114,17 +139,22 @@ The dev server starts at `http://localhost:3000` with hot module reloading.
 
 ## Roadmap
 
-### Phase 1 — Foundation *(current)*
+### Phase 1 — Foundation
 - [x] Project scaffolding (Bun + React + Shadcn)
-- [ ] Passkey registration & login (SimpleWebAuthn)
-- [ ] Browser chat UI (text + image upload)
-- [ ] SQLite user store with Drizzle ORM
-- [ ] Go backend with interaction logging
+- [x] Passkey registration & login (SimpleWebAuthn)
+- [x] Browser chat UI (streaming, image upload, Markdown + math, reasoning view)
+- [x] SQLite user store with Drizzle ORM
+- [x] Go backend with interaction logging
 
-### Phase 2 — Endpoint Donation
-- [ ] User-provided v1-compatible endpoint configuration
-- [ ] Proxy layer streams through user endpoints
-- [ ] Interaction data capture & consent flow
+### Phase 2 — Endpoint Donation *(current)*
+- [x] User-provided v1-compatible endpoint configuration (BYOE)
+- [x] Proxy layer streams through user endpoints
+- [x] On-the-fly model selection from `/v1/models`
+- [x] Conversation history & resume
+- [x] V1 Proxy + personal API keys for external tools (VS Code, opencode, Claude Code…)
+- [x] Local trace import (Claude Code, VS Code Copilot, OpenCode SQLite)
+- [x] On-device PII redaction (Transformers.js)
+- [x] Admin dashboard (category filters + pagination) and per-user "My Uploads"
 
 ### Phase 3 — Hosted Access
 - [ ] Credit system for API access
