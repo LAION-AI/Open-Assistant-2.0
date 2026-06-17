@@ -13,7 +13,37 @@ import {
   CheckCircle,
   AlertCircle,
   MessagesSquare,
+  Sparkles,
+  Copy,
+  Check,
 } from "lucide-react";
+
+type OS = "mac" | "windows" | "linux" | "unknown";
+
+function detectOS(): OS {
+  if (typeof navigator === "undefined") return "unknown";
+  const data = (navigator as any).userAgentData?.platform || "";
+  const s = `${data} ${navigator.platform || ""} ${navigator.userAgent || ""}`.toLowerCase();
+  if (s.includes("mac")) return "mac";
+  if (s.includes("win")) return "windows";
+  if (s.includes("linux") || s.includes("android")) return "linux";
+  return "unknown";
+}
+
+// Where Claude Code keeps its session transcripts, per OS.
+const CLAUDE_PATH: Record<OS, string> = {
+  mac: "~/.claude/projects",
+  linux: "~/.claude/projects",
+  windows: "%USERPROFILE%\\.claude\\projects",
+  unknown: "~/.claude/projects",
+};
+
+const DIALOG_TIP: Record<OS, string> = {
+  mac: "In the dialog, press ⌘⇧G, paste (⌘V), then Enter.",
+  linux: "In the dialog, press Ctrl+L, paste, then Enter.",
+  windows: "Paste the path into the dialog's address bar, then Enter.",
+  unknown: "Navigate to the folder shown above.",
+};
 
 interface Entry {
   id: string;
@@ -31,9 +61,29 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ParsedTrace | null>(null);
+  const [claudeTip, setClaudeTip] = useState(false);
+  const [pathCopied, setPathCopied] = useState(false);
 
   const folderRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
+
+  const os = detectOS();
+  const claudePath = CLAUDE_PATH[os];
+
+  const copyPath = () => {
+    navigator.clipboard?.writeText(claudePath).then(() => {
+      setPathCopied(true);
+      setTimeout(() => setPathCopied(false), 1500);
+    });
+  };
+
+  const openClaudeFolder = () => {
+    // Browsers can't point the picker at an arbitrary path, so copy it and tell
+    // the user how to jump there in the native dialog.
+    navigator.clipboard?.writeText(claudePath).catch(() => {});
+    setClaudeTip(true);
+    folderRef.current?.click();
+  };
 
   const handleFiles = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
@@ -136,7 +186,17 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
             className="hidden"
             onChange={e => handleFiles(e.target.files)}
           />
-          <Button type="button" onClick={() => folderRef.current?.click()} disabled={scanning} className="h-11 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold gap-2">
+          <Button
+            type="button"
+            onClick={openClaudeFolder}
+            disabled={scanning}
+            className="h-11 rounded-xl bg-[#D97757] hover:bg-[#c56647] text-white text-sm font-semibold gap-2"
+            title="Open the Claude Code traces folder"
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>Claude Code Traces</span>
+          </Button>
+          <Button type="button" variant="outline" onClick={() => folderRef.current?.click()} disabled={scanning} className="h-11 rounded-xl text-sm gap-2">
             {scanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderOpen className="w-4 h-4" />}
             <span>Choose folder</span>
           </Button>
@@ -145,6 +205,22 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
             <span>Choose files</span>
           </Button>
         </div>
+
+        {claudeTip && (
+          <div className="rounded-xl bg-[#D97757]/8 border border-[#D97757]/25 p-3.5 text-[11px] leading-relaxed space-y-1.5">
+            <div className="font-semibold text-[#D97757] flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5" /> Claude Code sessions live here ({os === "windows" ? "Windows" : os === "mac" ? "macOS" : os === "linux" ? "Linux" : "your OS"}):
+            </div>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 px-2 py-1.5 rounded-lg bg-background/60 border border-input font-mono text-[10px] truncate">{claudePath}</code>
+              <Button type="button" variant="outline" size="sm" onClick={copyPath} className="h-8 rounded-lg text-[10px] gap-1 flex-shrink-0">
+                {pathCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                <span>Copy</span>
+              </Button>
+            </div>
+            <div className="text-muted-foreground">{DIALOG_TIP[os]} <span className="text-muted-foreground/70">(path already copied to your clipboard)</span></div>
+          </div>
+        )}
 
         {error && (
           <div className="p-3 bg-destructive/10 border border-destructive/20 text-destructive text-xs rounded-xl flex items-center gap-2">
