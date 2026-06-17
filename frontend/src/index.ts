@@ -711,15 +711,21 @@ const server = serve({
           return Response.json({ error: "Forbidden" }, { status: 403 });
         }
 
-        // Fetch logs from Go backend proxy
-        const response = await fetch(`${BACKEND_URL}/api/logs`);
+        // Forward pagination + category filters to the Go backend.
+        const src = new URL(req.url).searchParams;
+        const qs = new URLSearchParams();
+        for (const k of ["category", "limit", "offset"]) {
+          const v = src.get(k);
+          if (v) qs.set(k, v);
+        }
+        const response = await fetch(`${BACKEND_URL}/api/logs?${qs.toString()}`);
         if (!response.ok) {
           const errText = await response.text();
           throw new Error(`Go backend returned error: ${errText}`);
         }
 
-        const logs = await response.json();
-        return Response.json({ logs });
+        // Go returns { logs, total, limit, offset }.
+        return Response.json(await response.json());
       } catch (err: any) {
         console.error("Error fetching admin logs:", err);
         return Response.json({ error: err.message }, { status: 500 });
@@ -744,8 +750,8 @@ const server = serve({
           const errText = await response.text();
           throw new Error(`Go backend returned error: ${errText}`);
         }
-        const logs = await response.json();
-        return Response.json({ logs: logs || [] });
+        const data = await response.json();
+        return Response.json({ logs: data.logs || [] });
       } catch (err: any) {
         console.error("Error fetching chat history:", err);
         return Response.json({ error: err.message }, { status: 500 });

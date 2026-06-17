@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"backend/db"
@@ -60,21 +61,27 @@ func main() {
 			return
 		}
 
-		// Optional ?userId= filter scopes logs to a single user (chat history).
-		var logs []*db.LogEntry
-		var err error
-		if userID := r.URL.Query().Get("userId"); userID != "" {
-			logs, err = repo.GetLogsByUser(r.Context(), userID)
-		} else {
-			logs, err = repo.GetLogs(r.Context())
-		}
+		// Filters: ?userId= scopes to one user, ?category= (all|chat|v1|trace),
+		// ?limit=&offset= paginate (limit<=0 returns all).
+		q := r.URL.Query()
+		userID := q.Get("userId")
+		category := q.Get("category")
+		limit, _ := strconv.Atoi(q.Get("limit"))
+		offset, _ := strconv.Atoi(q.Get("offset"))
+
+		logs, total, err := repo.GetLogsPaged(r.Context(), userID, category, limit, offset)
 		if err != nil {
 			log.Printf("Error getting logs: %v", err)
 			http.Error(w, fmt.Sprintf("Error getting logs: %v", err), http.StatusInternalServerError)
 			return
 		}
 
-		jsonBytes, err := json.Marshal(logs)
+		jsonBytes, err := json.Marshal(map[string]interface{}{
+			"logs":   logs,
+			"total":  total,
+			"limit":  limit,
+			"offset": offset,
+		})
 		if err != nil {
 			log.Printf("Error marshalling logs: %v", err)
 			http.Error(w, fmt.Sprintf("Error marshalling logs: %v", err), http.StatusInternalServerError)

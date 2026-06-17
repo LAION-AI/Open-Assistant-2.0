@@ -3,8 +3,30 @@ package db
 import (
 	"context"
 	"database/sql"
+	"strings"
+
 	_ "modernc.org/sqlite" // Pure Go SQLite driver
 )
+
+// SQL predicates for the platform-based categories. Uploaded traces are marked
+// with a `trace:` prefix; web chat is empty/"chat"; everything else is V1 proxy.
+const (
+	chatPredicate  = "(platform IS NULL OR platform = '' OR platform = 'chat')"
+	tracePredicate = "(platform = 'trace' OR platform LIKE 'trace:%')"
+)
+
+func categoryPredicate(category string) string {
+	switch category {
+	case "chat":
+		return chatPredicate
+	case "trace":
+		return tracePredicate
+	case "v1":
+		return "NOT (" + chatPredicate + " OR " + tracePredicate + ")"
+	default:
+		return ""
+	}
+}
 
 type SQLiteRepository struct {
 	db *sql.DB
@@ -83,6 +105,43 @@ func (r *SQLiteRepository) GetLogs(ctx context.Context) ([]*LogEntry, error) {
 func (r *SQLiteRepository) GetLogsByUser(ctx context.Context, userID string) ([]*LogEntry, error) {
 	query := `SELECT id, user_id, COALESCE(conversation_id, ''), COALESCE(platform, ''), prompt, response, tokens, created_at FROM interaction_logs WHERE user_id = ? ORDER BY created_at DESC`
 	return r.queryLogs(ctx, query, userID)
+}
+
+func (r *SQLiteRepository) GetLogsPaged(ctx context.Context, userID, category string, limit, offset int) ([]*LogEntry, int, error) {
+	var conds []string
+	var args []interface{}
+	if userID != "" {
+		conds = append(conds, "user_id = ?")
+		args = append(args, userID)
+	}
+	if pred := categoryPredicate(category); pred != "" {
+		conds = append(conds, pred)
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+
+	var total int
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM interaction_logs"+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	query := "SELECT id, user_id, COALESCE(conversation_id, ''), COALESCE(platform, ''), prompt, response, tokens, created_at FROM interaction_logs" +
+		where + " ORDER BY created_at DESC"
+	if limit > 0 {
+		query += " LIMIT ? OFFSET ?"
+		args = append(args, limit, offset)
+	}
+
+	logs, err := r.queryLogs(ctx, query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	if logs == nil {
+		logs = []*LogEntry{}
+	}
+	return logs, total, nil
 }
 
 func (r *SQLiteRepository) queryLogs(ctx context.Context, query string, args ...interface{}) ([]*LogEntry, error) {

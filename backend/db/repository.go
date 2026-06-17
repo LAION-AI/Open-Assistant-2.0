@@ -41,6 +41,10 @@ type LogRepository interface {
 	UpsertLog(ctx context.Context, entry *LogEntry) error
 	GetLogs(ctx context.Context) ([]*LogEntry, error)
 	GetLogsByUser(ctx context.Context, userID string) ([]*LogEntry, error)
+	// GetLogsPaged returns a page of rows filtered by user (optional) and category
+	// ("all"|"chat"|"v1"|"trace"), plus the total count for that filter. limit<=0
+	// returns all rows.
+	GetLogsPaged(ctx context.Context, userID, category string, limit, offset int) ([]*LogEntry, int, error)
 	// DeleteByConversation removes all rows of a conversation owned by the user.
 	DeleteByConversation(ctx context.Context, userID, conversationID string) (int64, error)
 	// DeleteByID removes a single owned log row.

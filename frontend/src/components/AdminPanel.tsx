@@ -36,33 +36,65 @@ export function AdminPanel() {
   const [expandedThinkingKeys, setExpandedThinkingKeys] = useState<Set<string>>(new Set());
   const [showRawJsonIds, setShowRawJsonIds] = useState<Set<number>>(new Set());
 
+  // Server-side pagination + category filter for logs.
+  const PAGE_SIZE = 100;
+  const [logCategory, setLogCategory] = useState<"all" | "chat" | "v1" | "trace">("all");
+  const [logPage, setLogPage] = useState(0);
+  const [logsTotal, setLogsTotal] = useState(0);
+  const [logsLoading, setLogsLoading] = useState(false);
+
+  const fetchUsers = async () => {
+    const res = await fetch("/api/admin/users");
+    if (!res.ok) throw new Error(`Failed to fetch users: ${res.statusText}`);
+    const data = await res.json();
+    setUsers(data.users || []);
+  };
+
+  const fetchLogs = async (category = logCategory, page = logPage) => {
+    setLogsLoading(true);
+    setError(null);
+    try {
+      const qs = new URLSearchParams({
+        category,
+        limit: String(PAGE_SIZE),
+        offset: String(page * PAGE_SIZE),
+      });
+      const res = await fetch(`/api/admin/logs?${qs.toString()}`);
+      if (!res.ok) throw new Error(`Failed to fetch interaction logs: ${res.statusText}`);
+      const data = await res.json();
+      setLogs(data.logs || []);
+      setLogsTotal(data.total || 0);
+      setExpandedLogId(null);
+    } catch (err: any) {
+      console.error("Error fetching admin logs:", err);
+      setError(err.message || "Failed to load logs");
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
   const fetchData = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [usersRes, logsRes] = await Promise.all([
-        fetch("/api/admin/users"),
-        fetch("/api/admin/logs"),
-      ]);
-
-      if (!usersRes.ok) {
-        throw new Error(`Failed to fetch users: ${usersRes.statusText}`);
-      }
-      if (!logsRes.ok) {
-        throw new Error(`Failed to fetch interaction logs: ${logsRes.statusText}`);
-      }
-
-      const usersData = await usersRes.json();
-      const logsData = await logsRes.json();
-
-      setUsers(usersData.users || []);
-      setLogs(logsData.logs || []);
+      await Promise.all([fetchUsers(), fetchLogs(logCategory, logPage)]);
     } catch (err: any) {
       console.error("Error fetching admin data:", err);
       setError(err.message || "Failed to load admin dashboard data");
     } finally {
       setLoading(false);
     }
+  };
+
+  const changeCategory = (category: "all" | "chat" | "v1" | "trace") => {
+    setLogCategory(category);
+    setLogPage(0);
+    fetchLogs(category, 0);
+  };
+
+  const goToPage = (page: number) => {
+    setLogPage(page);
+    fetchLogs(logCategory, page);
   };
 
   const parsePrompt = (prompt: string) => parseJsonObject(prompt);
@@ -170,8 +202,8 @@ export function AdminPanel() {
 
   // Calculate quick stats
   const totalUsers = users.length;
-  const totalLogs = logs.length;
-  const totalConversations = conversations.length;
+  const totalLogs = logsTotal; // server-side total for the active filter
+  const pageCount = Math.max(1, Math.ceil(logsTotal / PAGE_SIZE));
   const totalTokens = logs.reduce((acc, curr) => acc + (curr.tokens || 0), 0);
 
   const formatTime = (ts: number) => {
@@ -268,7 +300,7 @@ export function AdminPanel() {
                 : "text-muted-foreground hover:text-foreground hover:bg-muted/30"
             }`}
           >
-            Conversations ({totalConversations})
+            Conversations ({logsTotal})
           </button>
         </div>
 
@@ -343,7 +375,24 @@ export function AdminPanel() {
             </div>
           ) : (
             /* Logs List */
-            <div className="divide-y divide-border/40">
+            <div>
+              {/* Category filter */}
+              <div className="flex gap-1 border-b border-border/40 bg-muted/20 p-1 flex-wrap items-center">
+                {(["all", "chat", "v1", "trace"] as const).map(val => (
+                  <button
+                    key={val}
+                    onClick={() => changeCategory(val)}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                      logCategory === val ? "bg-background/80 text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-muted/30"
+                    }`}
+                  >
+                    {val === "v1" ? "V1 Proxy" : val === "trace" ? "Local traces" : val === "chat" ? "Chat" : "All"}
+                  </button>
+                ))}
+                {logsLoading && <RefreshCw className="w-3.5 h-3.5 animate-spin text-muted-foreground ml-1" />}
+              </div>
+
+              <div className="divide-y divide-border/40">
               {conversations.length === 0 ? (
                 <div className="p-12 text-center text-xs text-muted-foreground">No conversations logged yet.</div>
               ) : (
@@ -565,6 +614,33 @@ export function AdminPanel() {
                     </div>
                   );
                 })
+              )}
+              </div>
+
+              {/* Pagination */}
+              {logsTotal > PAGE_SIZE && (
+                <div className="flex items-center justify-between px-5 py-3 border-t border-border/40 text-xs">
+                  <span className="text-muted-foreground">
+                    {logPage * PAGE_SIZE + 1}–{Math.min((logPage + 1) * PAGE_SIZE, logsTotal)} of {logsTotal.toLocaleString()}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => goToPage(logPage - 1)}
+                      disabled={logPage <= 0 || logsLoading}
+                      className="px-3 py-1.5 rounded-lg border border-border/50 hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed font-semibold"
+                    >
+                      Prev
+                    </button>
+                    <span className="text-muted-foreground">Page {logPage + 1} / {pageCount}</span>
+                    <button
+                      onClick={() => goToPage(logPage + 1)}
+                      disabled={logPage + 1 >= pageCount || logsLoading}
+                      className="px-3 py-1.5 rounded-lg border border-border/50 hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed font-semibold"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           )}
