@@ -5,6 +5,7 @@ import { Modal } from "./Modal";
 import { ConversationThread } from "./ConversationThread";
 import { PlatformBadge } from "./PlatformBadge";
 import { parseTrace, traceToConversation, type ParsedTrace } from "../lib/traces";
+import { loadRedactor, redactMessages } from "../lib/redact";
 import {
   Upload,
   FolderOpen,
@@ -20,6 +21,7 @@ import {
   Code2,
   Zap,
   PawPrint,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -121,6 +123,7 @@ interface Entry {
   id: string;
   trace: ParsedTrace;
   selected: boolean;
+  redactions?: number; // PII items redacted (undefined = not yet redacted)
 }
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -136,6 +139,8 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
   const [preview, setPreview] = useState<ParsedTrace | null>(null);
   const [tip, setTip] = useState<TraceSource | null>(null);
   const [pathCopied, setPathCopied] = useState(false);
+  const [redactState, setRedactState] = useState<"idle" | "loading" | "running" | "done">("idle");
+  const [redactStatus, setRedactStatus] = useState("");
 
   const folderRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
@@ -221,6 +226,49 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
   const setAll = (v: boolean) => setEntries(prev => prev.map(e => ({ ...e, selected: v })));
 
   const selected = entries.filter(e => e.selected);
+  const redactBusy = redactState === "loading" || redactState === "running";
+
+  // Redact PII in every loaded conversation, on-device.
+  const redactAll = async () => {
+    if (entries.length === 0 || redactBusy) return;
+    setError(null);
+    setRedactState("loading");
+    setRedactStatus("Loading privacy model (first run downloads weights)…");
+
+    let classifier: any;
+    try {
+      classifier = await loadRedactor(info => {
+        if (info.status === "progress" && typeof info.progress === "number") {
+          setRedactStatus(`Downloading model… ${Math.round(info.progress)}%`);
+        } else if (info.status === "ready") {
+          setRedactStatus("Model ready — redacting…");
+        }
+      });
+    } catch (e: any) {
+      setRedactState("idle");
+      setError(`Couldn't load the privacy model: ${e?.message || e}. (WebGPU/WASM unavailable?)`);
+      return;
+    }
+
+    setRedactState("running");
+    const current = entries;
+    let total = 0;
+    for (let i = 0; i < current.length; i++) {
+      const e = current[i];
+      setRedactStatus(`Redacting conversation ${i + 1} / ${current.length}…`);
+      try {
+        const { messages, count } = await redactMessages(e.trace.messages as any, classifier);
+        total += count;
+        setEntries(prev =>
+          prev.map(x => (x.id === e.id ? { ...x, trace: { ...x.trace, messages }, redactions: count } : x)),
+        );
+      } catch {
+        setEntries(prev => prev.map(x => (x.id === e.id ? { ...x, redactions: x.redactions ?? 0 } : x)));
+      }
+    }
+    setRedactState("done");
+    setRedactStatus(`Redacted ${total} PII item${total === 1 ? "" : "s"} across ${current.length} conversation${current.length === 1 ? "" : "s"}.`);
+  };
 
   const upload = async () => {
     if (selected.length === 0) return;
@@ -356,8 +404,24 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
               <span className="text-muted-foreground">{selected.length} selected</span>
             </div>
 
+            {/* Local PII redaction */}
+            <div className="flex items-center gap-3 flex-wrap rounded-xl bg-violet-500/8 border border-violet-500/20 px-3 py-2.5">
+              <Button
+                type="button"
+                onClick={redactAll}
+                disabled={redactBusy}
+                className="h-9 rounded-lg bg-violet-600 hover:bg-violet-700 text-white text-xs font-semibold gap-2"
+              >
+                {redactBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                <span>{redactState === "done" ? "Redact again" : "Redact PII locally"}</span>
+              </Button>
+              <span className="text-[11px] text-muted-foreground flex-1 min-w-0">
+                {redactStatus || "Removes names, emails, phones, etc. on-device (openai/privacy-filter) before upload — nothing leaves your machine."}
+              </span>
+            </div>
+
             <div className="max-h-[320px] overflow-y-auto rounded-xl border border-border/50 divide-y divide-border/40">
-              {entries.map(({ id, trace, selected }) => (
+              {entries.map(({ id, trace, selected, redactions }) => (
                 <div key={id} className="flex items-center gap-3 px-3 py-2.5 hover:bg-muted/20">
                   <input
                     type="checkbox"
@@ -366,6 +430,15 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
                     className="w-4 h-4 accent-indigo-600 flex-shrink-0 cursor-pointer"
                   />
                   <PlatformBadge platform={trace.platform} />
+                  {redactions != null && (
+                    <span
+                      className="flex items-center gap-1 text-[10px] text-violet-400 bg-violet-500/10 border border-violet-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0"
+                      title={`${redactions} PII item(s) redacted`}
+                    >
+                      <ShieldCheck className="w-3 h-3" />
+                      <span>{redactions}</span>
+                    </span>
+                  )}
                   {/* Click the message count to preview the conversation */}
                   <button
                     onClick={() => setPreview(trace)}

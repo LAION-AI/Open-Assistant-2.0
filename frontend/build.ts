@@ -13,6 +13,9 @@ const result = await Bun.build({
   plugins: [tailwind],
   minify: true,
   target: "browser",
+  // Code-split so heavy, lazily-imported deps (e.g. the on-device PII model
+  // runtime) load only when used, not in the initial bundle.
+  splitting: true,
   sourcemap: "linked",
   define: {
     "process.env.NODE_ENV": JSON.stringify("production"),
