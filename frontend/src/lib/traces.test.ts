@@ -114,4 +114,35 @@ describe("parseTrace", () => {
     expect(t.ok).toBe(false);
     expect(t.error).toBeDefined();
   });
+
+  test("VS Code / Copilot chat session format", () => {
+    const session = {
+      kind: 0,
+      v: {
+        version: 3,
+        inputState: { selectedModel: { metadata: { family: "gpt-5.3-codex", name: "Auto", id: "auto" } } },
+        requests: [
+          { message: { text: "fix the docker compose" }, response: [{ value: "Sure, here's the plan:\n1. ..." }] },
+          { message: { text: "now run it" }, response: [{ value: "Done." }] },
+        ],
+      },
+    };
+    const t = parseTrace(
+      "129d09f4.jsonl",
+      "/Code/User/workspaceStorage/abc/chatSessions/129d09f4.jsonl",
+      JSON.stringify(session),
+    );
+    expect(t.ok).toBe(true);
+    expect(t.platform).toBe("vscode");
+    expect(t.model).toBe("gpt-5.3-codex");
+    expect(t.messages.map(m => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(t.messages[0].content).toBe("fix the docker compose");
+    expect(t.messages[1].content).toContain("here's the plan");
+    expect(t.turnCount).toBe(2);
+  });
+
+  test("empty VS Code session (no requests) is skipped", () => {
+    const t = parseTrace("e.jsonl", "chatSessions/e.jsonl", JSON.stringify({ kind: 0, v: { requests: [] } }));
+    expect(t.ok).toBe(false);
+  });
 });

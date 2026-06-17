@@ -1,4 +1,8 @@
 import { serve } from "bun";
+import { Database } from "bun:sqlite";
+import { mkdtempSync, writeFileSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import dns from "dns/promises";
 import net from "net";
 import {
@@ -147,6 +151,71 @@ async function resolveModelList(byoeUrl: string, byoeKey?: string | null): Promi
     return Array.isArray(data?.data) ? data.data.map((m: any) => m.id).filter(Boolean) : [];
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+// Parse an OpenCode SQLite database (newer versions store sessions in
+// ~/.local/share/opencode/opencode.db) into preview-able trace objects.
+function parseOpencodeDb(dbPath: string): any[] {
+  // Read-write (on the disposable temp copy) so SQLite can apply the WAL —
+  // readonly fails to open WAL-mode databases.
+  const ocdb = new Database(dbPath, { readwrite: true });
+  try {
+    const sessions = ocdb.query("SELECT id, title, model FROM session").all() as any[];
+    const traces: any[] = [];
+    for (const s of sessions) {
+      const msgRows = ocdb
+        .query("SELECT id, data FROM message WHERE session_id = ? ORDER BY time_created ASC")
+        .all(s.id) as any[];
+
+      const messages: any[] = [];
+      for (const m of msgRows) {
+        let md: any = {};
+        try {
+          md = JSON.parse(m.data);
+        } catch {}
+        const partRows = ocdb
+          .query("SELECT data FROM part WHERE message_id = ? ORDER BY time_created ASC")
+          .all(m.id) as any[];
+
+        let text = "";
+        let reasoning = "";
+        const tools: any[] = [];
+        for (const p of partRows) {
+          let pd: any = {};
+          try {
+            pd = JSON.parse(p.data);
+          } catch {}
+          if (pd.type === "text" && pd.text) text += (text ? "\n" : "") + pd.text;
+          else if (pd.type === "reasoning" && pd.text) reasoning += (reasoning ? "\n" : "") + pd.text;
+          else if (pd.type === "tool") {
+            tools.push({
+              type: "function",
+              function: { name: pd.tool || "tool", arguments: JSON.stringify(pd.state?.input ?? {}) },
+            });
+          }
+        }
+        const msg: any = { role: md.role || "user", content: text };
+        if (reasoning) msg.reasoning = reasoning;
+        if (tools.length) msg.tool_calls = tools;
+        messages.push(msg);
+      }
+
+      const filtered = messages.filter(m => m.content || m.tool_calls?.length || m.reasoning);
+      if (filtered.length === 0) continue;
+
+      let model = "";
+      try {
+        model = JSON.parse(s.model)?.id || "";
+      } catch {}
+      const firstUser = filtered.find(m => m.role === "user");
+      const title = (s.title || firstUser?.content || "OpenCode session").toString().slice(0, 80);
+      const turnCount = Math.max(filtered.filter(m => m.role === "user").length, 1);
+      traces.push({ ok: true, fileName: s.id, platform: "opencode", model, messages: filtered, turnCount, title });
+    }
+    return traces;
+  } finally {
+    ocdb.close();
   }
 }
 
@@ -804,6 +873,40 @@ const server = serve({
       } catch (err: any) {
         console.error("Error updating API key:", err);
         return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Parse an uploaded OpenCode SQLite db (+ optional WAL) into trace previews.
+    "/api/traces/parse-db": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const cookies = parseCookies(req.headers.get("cookie"));
+        const sessionToken = cookies["session"];
+        if (!sessionToken) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const payload = await verifySessionToken(sessionToken);
+        if (!payload) return Response.json({ error: "Invalid session" }, { status: 401 });
+
+        const form = await req.formData();
+        const dbFile = form.get("db");
+        if (!(dbFile instanceof File)) return Response.json({ error: "No db file" }, { status: 400 });
+
+        const dir = mkdtempSync(join(tmpdir(), "oa-oc-"));
+        try {
+          const base = join(dir, "opencode.db");
+          writeFileSync(base, Buffer.from(await dbFile.arrayBuffer()));
+          // SQLite applies a sibling WAL automatically if present (recent writes).
+          const wal = form.get("wal");
+          const shm = form.get("shm");
+          if (wal instanceof File) writeFileSync(base + "-wal", Buffer.from(await wal.arrayBuffer()));
+          if (shm instanceof File) writeFileSync(base + "-shm", Buffer.from(await shm.arrayBuffer()));
+          const traces = parseOpencodeDb(base);
+          return Response.json({ traces });
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      } catch (err: any) {
+        console.error("Error parsing opencode db:", err);
+        return Response.json({ error: err.message, traces: [] }, { status: 200 });
       }
     },
 

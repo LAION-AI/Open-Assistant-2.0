@@ -16,6 +16,11 @@ import {
   Sparkles,
   Copy,
   Check,
+  Terminal,
+  Code2,
+  Zap,
+  PawPrint,
+  type LucideIcon,
 } from "lucide-react";
 
 type OS = "mac" | "windows" | "linux" | "unknown";
@@ -30,13 +35,80 @@ function detectOS(): OS {
   return "unknown";
 }
 
-// Where Claude Code keeps its session transcripts, per OS.
-const CLAUDE_PATH: Record<OS, string> = {
-  mac: "~/.claude/projects",
-  linux: "~/.claude/projects",
-  windows: "%USERPROFILE%\\.claude\\projects",
-  unknown: "~/.claude/projects",
-};
+interface TraceSource {
+  id: string;
+  label: string;
+  color: string;
+  icon: LucideIcon;
+  /** Default location of the tool's session/history files, per OS. */
+  paths: Record<OS, string>;
+}
+
+// Best-effort default locations. The picker still lets the user navigate
+// elsewhere — these just pre-fill the path on the clipboard.
+const TRACE_SOURCES: TraceSource[] = [
+  {
+    id: "claude-code",
+    label: "Claude Code",
+    color: "#D97757",
+    icon: Sparkles,
+    paths: {
+      mac: "~/.claude/projects",
+      linux: "~/.claude/projects",
+      windows: "%USERPROFILE%\\.claude\\projects",
+      unknown: "~/.claude/projects",
+    },
+  },
+  {
+    id: "opencode",
+    label: "OpenCode",
+    color: "#0ea5e9",
+    icon: Terminal,
+    // Newer OpenCode keeps everything in opencode.db (SQLite); we parse it.
+    paths: {
+      mac: "~/.local/share/opencode",
+      linux: "~/.local/share/opencode",
+      windows: "%USERPROFILE%\\.local\\share\\opencode",
+      unknown: "~/.local/share/opencode",
+    },
+  },
+  {
+    id: "copilot",
+    label: "Copilot Chat",
+    color: "#0066b8",
+    icon: Code2,
+    paths: {
+      mac: "~/Library/Application Support/Code/User/workspaceStorage",
+      linux: "~/.config/Code/User/workspaceStorage",
+      windows: "%APPDATA%\\Code\\User\\workspaceStorage",
+      unknown: "~/.config/Code/User/workspaceStorage",
+    },
+  },
+  {
+    id: "hermes",
+    label: "Hermes Agent",
+    color: "#8b5cf6",
+    icon: Zap,
+    paths: {
+      mac: "~/.hermes/sessions",
+      linux: "~/.hermes/sessions",
+      windows: "%USERPROFILE%\\.hermes\\sessions",
+      unknown: "~/.hermes/sessions",
+    },
+  },
+  {
+    id: "openclaw",
+    label: "OpenClaw",
+    color: "#f97316",
+    icon: PawPrint,
+    paths: {
+      mac: "~/.openclaw/sessions",
+      linux: "~/.openclaw/sessions",
+      windows: "%USERPROFILE%\\.openclaw\\sessions",
+      unknown: "~/.openclaw/sessions",
+    },
+  },
+];
 
 const DIALOG_TIP: Record<OS, string> = {
   mac: "In the dialog, press ⌘⇧G, paste (⌘V), then Enter.",
@@ -52,6 +124,7 @@ interface Entry {
 }
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_DB_BYTES = 200 * 1024 * 1024;
 const MAX_FILES = 400;
 
 export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
@@ -61,27 +134,27 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ParsedTrace | null>(null);
-  const [claudeTip, setClaudeTip] = useState(false);
+  const [tip, setTip] = useState<TraceSource | null>(null);
   const [pathCopied, setPathCopied] = useState(false);
 
   const folderRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
 
   const os = detectOS();
-  const claudePath = CLAUDE_PATH[os];
+  const osLabel = os === "windows" ? "Windows" : os === "mac" ? "macOS" : os === "linux" ? "Linux" : "your OS";
 
-  const copyPath = () => {
-    navigator.clipboard?.writeText(claudePath).then(() => {
+  const copyPath = (path: string) => {
+    navigator.clipboard?.writeText(path).then(() => {
       setPathCopied(true);
       setTimeout(() => setPathCopied(false), 1500);
     });
   };
 
-  const openClaudeFolder = () => {
+  const openSource = (src: TraceSource) => {
     // Browsers can't point the picker at an arbitrary path, so copy it and tell
     // the user how to jump there in the native dialog.
-    navigator.clipboard?.writeText(claudePath).catch(() => {});
-    setClaudeTip(true);
+    navigator.clipboard?.writeText(src.paths[os]).catch(() => {});
+    setTip(src);
     folderRef.current?.click();
   };
 
@@ -91,12 +164,15 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
     setError(null);
     setResult(null);
     try {
-      const files = Array.from(fileList)
+      const all = Array.from(fileList);
+      const byPath = new Map(all.map(f => [((f as any).webkitRelativePath || f.name) as string, f]));
+      const parsed: Entry[] = [];
+
+      // Text-based traces (Claude Code / VS Code / OpenAI JSON & JSONL).
+      const textFiles = all
         .filter(f => /\.(jsonl?|ndjson)$/i.test(f.name) && f.size <= MAX_FILE_BYTES)
         .slice(0, MAX_FILES);
-
-      const parsed: Entry[] = [];
-      for (const f of files) {
+      for (const f of textFiles) {
         const path = (f as any).webkitRelativePath || f.name;
         let text = "";
         try {
@@ -108,7 +184,30 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
         if (trace.ok) parsed.push({ id: `${path}:${parsed.length}`, trace, selected: true });
       }
 
-      // Newest-looking / largest conversations first.
+      // SQLite databases (OpenCode) — parsed server-side via bun:sqlite.
+      const dbFiles = all.filter(f => /\.db$/i.test(f.name) && f.size <= MAX_DB_BYTES);
+      for (const dbf of dbFiles) {
+        const path = (dbf as any).webkitRelativePath || dbf.name;
+        const fd = new FormData();
+        fd.append("db", dbf);
+        const wal = byPath.get(path + "-wal");
+        const shm = byPath.get(path + "-shm");
+        if (wal) fd.append("wal", wal);
+        if (shm) fd.append("shm", shm);
+        try {
+          const res = await fetch("/api/traces/parse-db", { method: "POST", body: fd });
+          if (res.ok) {
+            const data = await res.json();
+            for (const t of data.traces || []) {
+              if (t.ok) parsed.push({ id: `${path}:${parsed.length}`, trace: t, selected: true });
+            }
+          }
+        } catch {
+          // ignore unreadable db
+        }
+      }
+
+      // Largest conversations first.
       parsed.sort((a, b) => b.trace.messages.length - a.trace.messages.length);
       setEntries(parsed);
       if (parsed.length === 0) setError("No readable conversation traces found in that selection.");
@@ -186,16 +285,23 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
             className="hidden"
             onChange={e => handleFiles(e.target.files)}
           />
-          <Button
-            type="button"
-            onClick={openClaudeFolder}
-            disabled={scanning}
-            className="h-11 rounded-xl bg-[#D97757] hover:bg-[#c56647] text-white text-sm font-semibold gap-2"
-            title="Open the Claude Code traces folder"
-          >
-            <Sparkles className="w-4 h-4" />
-            <span>Claude Code Traces</span>
-          </Button>
+          {TRACE_SOURCES.map(src => {
+            const Icon = src.icon;
+            return (
+              <Button
+                key={src.id}
+                type="button"
+                onClick={() => openSource(src)}
+                disabled={scanning}
+                className="h-11 rounded-xl text-white text-sm font-semibold gap-2 hover:brightness-110 transition"
+                style={{ backgroundColor: src.color }}
+                title={`Open the ${src.label} traces folder`}
+              >
+                <Icon className="w-4 h-4" />
+                <span>{src.label}</span>
+              </Button>
+            );
+          })}
           <Button type="button" variant="outline" onClick={() => folderRef.current?.click()} disabled={scanning} className="h-11 rounded-xl text-sm gap-2">
             {scanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderOpen className="w-4 h-4" />}
             <span>Choose folder</span>
@@ -206,14 +312,17 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
           </Button>
         </div>
 
-        {claudeTip && (
-          <div className="rounded-xl bg-[#D97757]/8 border border-[#D97757]/25 p-3.5 text-[11px] leading-relaxed space-y-1.5">
-            <div className="font-semibold text-[#D97757] flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5" /> Claude Code sessions live here ({os === "windows" ? "Windows" : os === "mac" ? "macOS" : os === "linux" ? "Linux" : "your OS"}):
+        {tip && (
+          <div
+            className="rounded-xl border p-3.5 text-[11px] leading-relaxed space-y-1.5"
+            style={{ borderColor: `${tip.color}40`, backgroundColor: `${tip.color}14` }}
+          >
+            <div className="font-semibold flex items-center gap-1.5" style={{ color: tip.color }}>
+              <tip.icon className="w-3.5 h-3.5" /> {tip.label} sessions live here ({osLabel}):
             </div>
             <div className="flex items-center gap-2">
-              <code className="flex-1 px-2 py-1.5 rounded-lg bg-background/60 border border-input font-mono text-[10px] truncate">{claudePath}</code>
-              <Button type="button" variant="outline" size="sm" onClick={copyPath} className="h-8 rounded-lg text-[10px] gap-1 flex-shrink-0">
+              <code className="flex-1 px-2 py-1.5 rounded-lg bg-background/60 border border-input font-mono text-[10px] truncate">{tip.paths[os]}</code>
+              <Button type="button" variant="outline" size="sm" onClick={() => copyPath(tip.paths[os])} className="h-8 rounded-lg text-[10px] gap-1 flex-shrink-0">
                 {pathCopied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
                 <span>Copy</span>
               </Button>

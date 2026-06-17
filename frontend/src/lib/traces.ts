@@ -65,6 +65,50 @@ function flattenContent(content: any): { text: string; reasoning: string; tools:
   return { text: typeof content === "object" ? JSON.stringify(content) : String(content), reasoning: "", tools: [] };
 }
 
+/** Extract assistant text + tool calls from a VS Code chat `response` array. */
+function extractVscResponse(response: any): { text: string; tools: any[] } {
+  if (typeof response === "string") return { text: response, tools: [] };
+  if (!Array.isArray(response)) return { text: "", tools: [] };
+  let text = "";
+  const tools: any[] = [];
+  for (const part of response) {
+    if (typeof part === "string") {
+      text += (text ? "\n" : "") + part;
+      continue;
+    }
+    if (!part || typeof part !== "object") continue;
+    if (typeof part.value === "string") text += (text ? "\n" : "") + part.value;
+    else if (part.content && typeof part.content.value === "string") text += (text ? "\n" : "") + part.content.value;
+    const kind = typeof part.kind === "string" ? part.kind.toLowerCase() : "";
+    if (kind.includes("tool") || part.toolId || part.toolCallId) {
+      const name = part.toolId || part.toolName || part.name || "tool";
+      const args = part.toolSpecificData ?? part.invocationMessage ?? part.resultDetails ?? {};
+      tools.push({
+        type: "function",
+        function: { name, arguments: typeof args === "string" ? args : JSON.stringify(args) },
+      });
+    }
+  }
+  return { text, tools };
+}
+
+/** Parse VS Code's chat session shape: { v: { requests: [{ message, response }] } }. */
+function parseVscChat(whole: any): { model: string; messages: TraceMessage[] } {
+  const v = whole.v || {};
+  const meta = v.inputState?.selectedModel?.metadata;
+  const model = meta?.family || meta?.name || meta?.id || "";
+  const messages: TraceMessage[] = [];
+  for (const req of v.requests || []) {
+    const userText = typeof req?.message?.text === "string" ? req.message.text : flattenContent(req?.message?.parts).text;
+    messages.push({ role: "user", content: userText || "" });
+    const { text, tools } = extractVscResponse(req?.response);
+    const am: TraceMessage = { role: "assistant", content: text };
+    if (tools.length) am.tool_calls = tools;
+    messages.push(am);
+  }
+  return { model, messages };
+}
+
 function toMessage(role: string, content: any): TraceMessage {
   const { text, reasoning, tools } = flattenContent(content);
   const m: TraceMessage = { role, content: text };
@@ -106,7 +150,12 @@ export function parseTrace(fileName: string, path: string, text: string): Parsed
     whole = JSON.parse(trimmed);
   } catch {}
 
-  if (whole && !Array.isArray(whole) && Array.isArray(whole.messages)) {
+  if (whole && !Array.isArray(whole) && whole.v && Array.isArray(whole.v.requests)) {
+    // VS Code / Copilot chat session.
+    const vsc = parseVscChat(whole);
+    model = vsc.model;
+    messages.push(...vsc.messages);
+  } else if (whole && !Array.isArray(whole) && Array.isArray(whole.messages)) {
     model = typeof whole.model === "string" ? whole.model : "";
     for (const m of whole.messages) {
       const mm = messageFromEntry(m);
