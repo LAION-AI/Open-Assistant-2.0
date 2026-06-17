@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
 import { Modal } from "./Modal";
 import { ConversationThread } from "./ConversationThread";
 import { PlatformBadge } from "./PlatformBadge";
@@ -141,6 +142,7 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
   const [pathCopied, setPathCopied] = useState(false);
   const [redactState, setRedactState] = useState<"idle" | "loading" | "running" | "done">("idle");
   const [redactStatus, setRedactStatus] = useState("");
+  const [autoRedact, setAutoRedact] = useState(true);
 
   const folderRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
@@ -228,13 +230,15 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
   const selected = entries.filter(e => e.selected);
   const redactBusy = redactState === "loading" || redactState === "running";
 
-  // Redact PII in every loaded conversation, on-device.
-  const redactAll = async () => {
-    if (entries.length === 0 || redactBusy) return;
-    setError(null);
+  // Load the model and redact the given entries on-device. Only message text +
+  // reasoning are touched (never tool_call arguments), so stored JSON stays valid.
+  // Returns id -> redacted messages so callers can use fresh results immediately.
+  const redactEntries = async (targets: Entry[]): Promise<Map<string, any[]>> => {
+    const result = new Map<string, any[]>();
+    if (targets.length === 0) return result;
+
     setRedactState("loading");
     setRedactStatus("Loading privacy model (first run downloads weights)…");
-
     let classifier: any;
     try {
       classifier = await loadRedactor(info => {
@@ -246,19 +250,18 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
       });
     } catch (e: any) {
       setRedactState("idle");
-      setError(`Couldn't load the privacy model: ${e?.message || e}. (WebGPU/WASM unavailable?)`);
-      return;
+      throw new Error(`Couldn't load the privacy model: ${e?.message || e}. (WebGPU/WASM unavailable?)`);
     }
 
     setRedactState("running");
-    const current = entries;
     let total = 0;
-    for (let i = 0; i < current.length; i++) {
-      const e = current[i];
-      setRedactStatus(`Redacting conversation ${i + 1} / ${current.length}…`);
+    for (let i = 0; i < targets.length; i++) {
+      const e = targets[i];
+      setRedactStatus(`Redacting conversation ${i + 1} / ${targets.length}…`);
       try {
         const { messages, count } = await redactMessages(e.trace.messages as any, classifier);
         total += count;
+        result.set(e.id, messages);
         setEntries(prev =>
           prev.map(x => (x.id === e.id ? { ...x, trace: { ...x.trace, messages }, redactions: count } : x)),
         );
@@ -267,15 +270,42 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
       }
     }
     setRedactState("done");
-    setRedactStatus(`Redacted ${total} PII item${total === 1 ? "" : "s"} across ${current.length} conversation${current.length === 1 ? "" : "s"}.`);
+    setRedactStatus(`Redacted ${total} PII item${total === 1 ? "" : "s"} across ${targets.length} conversation${targets.length === 1 ? "" : "s"}.`);
+    return result;
+  };
+
+  // Redact every loaded conversation (manual button).
+  const redactAll = async () => {
+    if (entries.length === 0 || redactBusy) return;
+    setError(null);
+    try {
+      await redactEntries(entries);
+    } catch (e: any) {
+      setError(e.message);
+    }
   };
 
   const upload = async () => {
-    if (selected.length === 0) return;
+    if (selected.length === 0 || uploading || redactBusy) return;
     setUploading(true);
     setError(null);
     setResult(null);
     try {
+      // Redact (on-device) any selected, not-yet-redacted conversations first.
+      let redacted = new Map<string, any[]>();
+      if (autoRedact) {
+        const pending = selected.filter(e => e.redactions == null);
+        if (pending.length > 0) {
+          try {
+            redacted = await redactEntries(pending);
+          } catch (e: any) {
+            setError(e.message);
+            setUploading(false);
+            return;
+          }
+        }
+      }
+
       const res = await fetch("/api/traces/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -283,13 +313,13 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
           traces: selected.map(e => ({
             platform: e.trace.platform,
             model: e.trace.model,
-            messages: e.trace.messages,
+            messages: redacted.get(e.id) || e.trace.messages,
           })),
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Upload failed");
-      setResult(`Uploaded ${data.saved} trace${data.saved === 1 ? "" : "s"}.`);
+      setResult(`Uploaded ${data.saved} trace${data.saved === 1 ? "" : "s"}${autoRedact ? " (PII redacted)" : ""}.`);
       setEntries([]);
       onUploaded();
     } catch (err: any) {
@@ -462,10 +492,23 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
               ))}
             </div>
 
-            <Button onClick={upload} disabled={uploading || selected.length === 0} className="h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold gap-2">
-              {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              <span>{uploading ? "Uploading…" : `Upload ${selected.length} selected`}</span>
-            </Button>
+            <div className="flex items-center gap-4 flex-wrap">
+              <Button onClick={upload} disabled={uploading || redactBusy || selected.length === 0} className="h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold gap-2">
+                {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                <span>{uploading ? (redactBusy ? "Redacting…" : "Uploading…") : `Upload ${selected.length} selected`}</span>
+              </Button>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+                <Checkbox
+                  checked={autoRedact}
+                  onCheckedChange={v => setAutoRedact(v === true)}
+                  disabled={uploading || redactBusy}
+                />
+                <span className="flex items-center gap-1">
+                  <ShieldCheck className="w-3.5 h-3.5 text-violet-400" />
+                  Redact PII before upload
+                </span>
+              </label>
+            </div>
           </div>
         )}
       </CardContent>
