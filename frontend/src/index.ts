@@ -801,6 +801,70 @@ const server = serve({
       }
     },
 
+    // Ingest user-selected agent traces (Claude Code / VS Code sessions) as
+    // logged conversations so they show up under "My Uploads".
+    "/api/traces/upload": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const cookies = parseCookies(req.headers.get("cookie"));
+        const sessionToken = cookies["session"];
+        if (!sessionToken) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const payload = await verifySessionToken(sessionToken);
+        if (!payload) return Response.json({ error: "Invalid session" }, { status: 401 });
+
+        const body = await req.json().catch(() => ({}));
+        const traces: any[] = Array.isArray(body?.traces) ? body.traces : [];
+        if (traces.length === 0) return Response.json({ error: "No traces provided" }, { status: 400 });
+
+        let saved = 0;
+        for (const tr of traces) {
+          const messages: any[] = Array.isArray(tr?.messages) ? tr.messages : [];
+          if (messages.length === 0) continue;
+
+          // Last assistant message becomes the logged "response"; the rest is the
+          // prompt history — mirrors how live turns are stored.
+          let history = messages;
+          let finalAssistant: any = { role: "assistant", content: "" };
+          if (messages[messages.length - 1]?.role === "assistant") {
+            finalAssistant = messages[messages.length - 1];
+            history = messages.slice(0, -1);
+          }
+
+          const prompt = JSON.stringify({ model: tr.model || "trace", messages: history });
+          const response = JSON.stringify({
+            role: "assistant",
+            content: finalAssistant.content || "",
+            reasoning_content: finalAssistant.reasoning || "",
+            ...(finalAssistant.tool_calls ? { tool_calls: finalAssistant.tool_calls } : {}),
+          });
+          const tokens = Math.floor((prompt.length + response.length) / 4);
+
+          // Mark uploads with a `trace:` prefix so they're distinguishable from
+          // live V1-proxy sessions of the same tool (e.g. trace:claude-code).
+          const detected = (tr.platform || "trace").toString();
+          const platform = (detected.startsWith("trace") ? detected : `trace:${detected}`).slice(0, 40);
+
+          const res = await fetch(`${BACKEND_URL}/api/log-interaction`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              userId: payload.userId,
+              conversationId: crypto.randomUUID(),
+              platform,
+              prompt,
+              response,
+              tokens,
+            }),
+          });
+          if (res.ok) saved++;
+        }
+        return Response.json({ saved });
+      } catch (err: any) {
+        console.error("Error uploading traces:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
     // Delete one of the current user's own conversations/logs
     "/api/chat/delete": async req => {
       try {

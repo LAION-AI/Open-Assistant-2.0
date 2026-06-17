@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Markdown } from "./Markdown";
+import { PlatformBadge } from "./PlatformBadge";
 import {
   splitThinking,
   getLastUserMessage,
@@ -392,19 +393,7 @@ export function AdminPanel() {
                           </div>
 
                           {/* Platform badge */}
-                          {conv.platform && (
-                            <div
-                              className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 border ${
-                                conv.platform === "chat"
-                                  ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
-                                  : "text-sky-400 bg-sky-500/10 border-sky-500/20"
-                              }`}
-                              title="Origin platform"
-                            >
-                              {conv.platform === "chat" ? <MessageSquare className="w-3 h-3" /> : <Code className="w-3 h-3" />}
-                              <span>{conv.platform}</span>
-                            </div>
-                          )}
+                          {conv.platform && <PlatformBadge platform={conv.platform} />}
 
                           {/* Thinking badge */}
                           {thinking && (

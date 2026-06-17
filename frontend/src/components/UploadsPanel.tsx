@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { ConversationThread } from "./ConversationThread";
+import { TraceUpload } from "./TraceUpload";
 import {
   groupConversations,
   conversationTitle,
   conversationHasThinking,
   truncateText,
   getLastUserMessage,
+  platformCategory,
   type Conversation,
   type InteractionLog,
 } from "../lib/chat";
+import { PlatformBadge } from "./PlatformBadge";
 import {
   Database,
   MessageSquare,
@@ -25,7 +28,7 @@ import {
   Boxes,
 } from "lucide-react";
 
-type Filter = "all" | "chat" | "api";
+type Filter = "all" | "chat" | "v1" | "trace";
 
 function formatTime(ts: number) {
   return new Date(ts > 9999999999 ? ts : ts * 1000).toLocaleString();
@@ -58,13 +61,12 @@ export function UploadsPanel() {
     fetchData();
   }, []);
 
-  const isChat = (c: Conversation) => c.platform === "chat" || c.platform === "";
-  const visible = conversations.filter(c =>
-    filter === "all" ? true : filter === "chat" ? isChat(c) : !isChat(c),
-  );
+  const visible = conversations.filter(c => (filter === "all" ? true : platformCategory(c.platform) === filter));
 
   const totalTokens = conversations.reduce((a, c) => a + c.totalTokens, 0);
-  const apiCount = conversations.filter(c => !isChat(c)).length;
+  const chatCount = conversations.filter(c => platformCategory(c.platform) === "chat").length;
+  const v1Count = conversations.filter(c => platformCategory(c.platform) === "v1").length;
+  const traceCount = conversations.filter(c => platformCategory(c.platform) === "trace").length;
 
   const deleteConversation = async (conv: Conversation) => {
     if (!confirm("Delete this conversation permanently? This removes it from the dataset.")) return;
@@ -107,6 +109,9 @@ export function UploadsPanel() {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
+      {/* Trace uploader */}
+      <TraceUpload onUploaded={fetchData} />
+
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="bg-card/45 border-border/80 backdrop-blur-md">
@@ -123,8 +128,8 @@ export function UploadsPanel() {
         <Card className="bg-card/45 border-border/80 backdrop-blur-md">
           <CardContent className="p-6 flex items-center justify-between">
             <div className="space-y-1">
-              <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">API / Tool Uploads</span>
-              <p className="text-3xl font-extrabold text-sky-400">{apiCount}</p>
+              <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">V1 Proxy / Traces</span>
+              <p className="text-3xl font-extrabold text-sky-400">{v1Count + traceCount}</p>
             </div>
             <div className="w-12 h-12 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
               <Code className="w-6 h-6" />
@@ -167,8 +172,9 @@ export function UploadsPanel() {
 
         <div className="flex gap-1 border-b border-border/40 bg-muted/40 p-1">
           <FilterBtn value="all" label={`All (${conversations.length})`} />
-          <FilterBtn value="chat" label={`Chat (${conversations.length - apiCount})`} />
-          <FilterBtn value="api" label={`API / Tools (${apiCount})`} />
+          <FilterBtn value="chat" label={`Chat (${chatCount})`} />
+          <FilterBtn value="v1" label={`V1 Proxy (${v1Count})`} />
+          <FilterBtn value="trace" label={`Local traces (${traceCount})`} />
         </div>
 
         <CardContent className="p-0">
@@ -190,7 +196,6 @@ export function UploadsPanel() {
             <div className="divide-y divide-border/40">
               {visible.map(conv => {
                 const open = expanded === conv.id;
-                const chat = isChat(conv);
                 return (
                   <div key={conv.id}>
                     <div
@@ -198,14 +203,7 @@ export function UploadsPanel() {
                       className="px-5 py-3.5 flex items-center justify-between cursor-pointer select-none hover:bg-muted/10 transition-all"
                     >
                       <div className="flex items-center gap-3 text-xs min-w-0 flex-1">
-                        <div
-                          className={`flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0 border ${
-                            chat ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" : "text-sky-400 bg-sky-500/10 border-sky-500/20"
-                          }`}
-                        >
-                          {chat ? <MessageSquare className="w-3 h-3" /> : <Code className="w-3 h-3" />}
-                          <span>{conv.platform || "chat"}</span>
-                        </div>
+                        <PlatformBadge platform={conv.platform} />
                         {conv.model && (
                           <div
                             className="px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-[10px] text-indigo-400 font-medium font-mono truncate max-w-[160px] flex-shrink-0"

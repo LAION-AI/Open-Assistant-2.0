@@ -351,6 +351,27 @@ export function conversationHasThinking(conv: Conversation): boolean {
   return conv.logs.some(l => hasThinking(l.response));
 }
 
+export type PlatformCategory = "chat" | "v1" | "trace";
+
+/**
+ * Bucket a platform value: web chat, a live V1-proxy session, or an uploaded
+ * local trace (marked with a `trace:` prefix at ingest time).
+ */
+export function platformCategory(platform: string | undefined): PlatformCategory {
+  const p = (platform || "").toLowerCase();
+  if (p === "" || p === "chat") return "chat";
+  if (p === "trace" || p.startsWith("trace:")) return "trace";
+  return "v1";
+}
+
+/** Human-friendly platform label (strips the internal `trace:` marker). */
+export function platformLabel(platform: string | undefined): string {
+  const p = platform || "";
+  if (p === "") return "chat";
+  if (p.toLowerCase().startsWith("trace:")) return p.slice("trace:".length);
+  return p;
+}
+
 /** Short label for a conversation, from its first user message. */
 export function conversationTitle(conv: Conversation): string {
   const msgs = getMessages(conv.latest.prompt);

@@ -1,0 +1,117 @@
+import { describe, expect, test } from "bun:test";
+import { parseTrace, detectTracePlatform, traceToConversation } from "./traces";
+import { platformCategory, platformLabel, buildConversationTurns, toolCallsOf } from "./chat";
+
+describe("platform categorization", () => {
+  test("category buckets", () => {
+    expect(platformCategory("")).toBe("chat");
+    expect(platformCategory("chat")).toBe("chat");
+    expect(platformCategory("vscode")).toBe("v1");
+    expect(platformCategory("claude-code")).toBe("v1");
+    expect(platformCategory("trace:claude-code")).toBe("trace");
+    expect(platformCategory("trace")).toBe("trace");
+  });
+  test("labels strip the trace marker", () => {
+    expect(platformLabel("trace:claude-code")).toBe("claude-code");
+    expect(platformLabel("vscode")).toBe("vscode");
+    expect(platformLabel("")).toBe("chat");
+  });
+});
+
+describe("traceToConversation (preview)", () => {
+  test("rebuilds a previewable conversation with reasoning + tools", () => {
+    const t = parseTrace(
+      "s.jsonl",
+      "/x/.claude/p/s.jsonl",
+      [
+        JSON.stringify({ message: { role: "user", content: "make a file" } }),
+        JSON.stringify({
+          message: {
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "writing it" },
+              { type: "text", text: "done" },
+              { type: "tool_use", name: "write_file", input: { path: "a.txt", content: "hi" } },
+            ],
+          },
+        }),
+      ].join("\n"),
+    );
+    const conv = traceToConversation(t);
+    const { turns } = buildConversationTurns(conv);
+    expect(turns).toHaveLength(1);
+    expect(turns[0].user.content).toBe("make a file");
+    expect(turns[0].assistant.content).toBe("done");
+    expect(turns[0].assistant.reasoning_content).toBe("writing it");
+    expect(toolCallsOf(turns[0].assistant)[0].path).toBe("a.txt");
+  });
+});
+
+describe("detectTracePlatform", () => {
+  test("from path", () => {
+    expect(detectTracePlatform("/Users/x/.claude/projects/abc/sess.jsonl", "")).toBe("claude-code");
+    expect(detectTracePlatform("workspaceStorage/copilot/chat.json", "")).toBe("vscode");
+    expect(detectTracePlatform("random.json", "")).toBe("trace");
+  });
+  test("from content hints", () => {
+    expect(detectTracePlatform("x.jsonl", '{"sessionId":"a","cwd":"/p"}')).toBe("claude-code");
+  });
+});
+
+describe("parseTrace", () => {
+  test("OpenAI-style JSON with messages", () => {
+    const text = JSON.stringify({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: "be nice" },
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "hello" },
+      ],
+    });
+    const t = parseTrace("chat.json", "chat.json", text);
+    expect(t.ok).toBe(true);
+    expect(t.model).toBe("gpt-4o");
+    expect(t.messages.map(m => m.role)).toEqual(["system", "user", "assistant"]);
+    expect(t.turnCount).toBe(1);
+    expect(t.title).toBe("hi");
+  });
+
+  test("JSONL with nested message + content blocks (Claude Code style)", () => {
+    const lines = [
+      JSON.stringify({ type: "user", sessionId: "s1", cwd: "/p", message: { role: "user", content: "make a file" } }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          role: "assistant",
+          model: "claude-opus",
+          content: [
+            { type: "thinking", thinking: "I should write it" },
+            { type: "text", text: "Sure, here it is." },
+            { type: "tool_use", id: "tu1", name: "write_file", input: { path: "a.txt", content: "hi" } },
+          ],
+        },
+      }),
+    ].join("\n");
+    const parsed = parseTrace("sess.jsonl", "/Users/x/.claude/projects/p/sess.jsonl", lines);
+    expect(parsed.platform).toBe("claude-code");
+    expect(parsed.model).toBe("claude-opus");
+    expect(parsed.messages).toHaveLength(2);
+    expect(parsed.messages[1].role).toBe("assistant");
+    expect(parsed.messages[1].content).toBe("Sure, here it is.");
+    expect(parsed.messages[1].reasoning).toBe("I should write it");
+    expect(parsed.messages[1].tool_calls?.[0].function.name).toBe("write_file");
+    expect(JSON.parse(parsed.messages[1].tool_calls![0].function.arguments).path).toBe("a.txt");
+  });
+
+  test("ignores malformed JSONL lines but keeps valid ones", () => {
+    const lines = ['{"role":"user","content":"q1"}', "not json", '{"role":"assistant","content":"a1"}'];
+    const t = parseTrace("x.jsonl", "x.jsonl", lines.join("\n"));
+    expect(t.messages.map(m => m.content)).toEqual(["q1", "a1"]);
+  });
+
+  test("empty / non-conversation file is not ok", () => {
+    const t = parseTrace("x.json", "x.json", "{}");
+    expect(t.ok).toBe(false);
+    expect(t.error).toBeDefined();
+  });
+});
