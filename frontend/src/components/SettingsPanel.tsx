@@ -3,7 +3,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { Server, Key, Brain, CheckCircle, HelpCircle, RefreshCw, Copy, Check, Trash2, Network } from "lucide-react";
+import { Server, Key, Brain, CheckCircle, HelpCircle, RefreshCw, Copy, Check, Trash2, Network, Code2, Download, Loader2 } from "lucide-react";
 
 interface User {
   id: string;
@@ -42,6 +42,77 @@ export function SettingsPanel({ user, onUpdateUser }: SettingsPanelProps) {
       setCopiedField(field);
       setTimeout(() => setCopiedField(prev => (prev === field ? null : prev)), 1500);
     });
+  };
+
+  // VS Code setup state
+  const [vscodeState, setVscodeState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [vscodeModelCount, setVscodeModelCount] = useState(0);
+  const proxyCompletions = `${proxyBase}/chat/completions`; // header-auth endpoint
+
+  // Ensure the user has an API key (to paste into VS Code's secure prompt).
+  const ensureApiKey = async (): Promise<string | null> => {
+    if (apiKey) return apiKey;
+    const r = await fetch("/api/user/apikey", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const d = await r.json();
+    setApiKey(d.apiKey);
+    onUpdateUser({ ...user, apiKey: d.apiKey });
+    return d.apiKey;
+  };
+
+  // Build just the `models` array (header-auth URLs) to paste into the VS Code
+  // config. The API key is NOT included — VS Code stores it in Secret Storage.
+  const buildVscodeModels = async (): Promise<{ json: string; count: number }> => {
+    const res = await fetch("/api/models");
+    const data = await res.json().catch(() => ({}));
+    const ids: string[] = data?.models?.length
+      ? data.models
+      : byoeModel
+        ? [byoeModel]
+        : ["gpt-4o"];
+    const models = ids.map(id => ({
+      id,
+      name: `${id} (OA proxy)`,
+      url: proxyCompletions,
+      toolCalling: true,
+      vision: true,
+      maxInputTokens: 128000,
+      maxOutputTokens: 16000,
+    }));
+    return { json: JSON.stringify(models, null, 2), count: ids.length };
+  };
+
+  const copyVscodeModels = async () => {
+    setVscodeState("loading");
+    try {
+      await ensureApiKey();
+      const { json, count } = await buildVscodeModels();
+      await navigator.clipboard?.writeText(json);
+      setVscodeModelCount(count);
+      setVscodeState("done");
+      setTimeout(() => setVscodeState(prev => (prev === "done" ? "idle" : prev)), 12000);
+    } catch (err) {
+      console.error("VS Code models copy failed:", err);
+      setVscodeState("error");
+    }
+  };
+
+  const downloadVscodeModels = async () => {
+    try {
+      const { json } = await buildVscodeModels();
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "open-assistant-vscode-models.json";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Download failed:", err);
+    }
   };
 
   const updateApiKey = async (revoke: boolean) => {
@@ -413,6 +484,88 @@ export function SettingsPanel({ user, onUpdateUser }: SettingsPanelProps) {
               </p>
             </div>
           )}
+        </div>
+
+        {/* VS Code setup — secure flow (key stored in VS Code Secret Storage) */}
+        <div className="space-y-3">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+            <Code2 className="w-3.5 h-3.5" /> Add to VS Code
+          </Label>
+
+          <ol className="space-y-2.5 text-[11px] text-muted-foreground leading-relaxed">
+            <li className="flex gap-2">
+              <span className="flex-shrink-0 w-4 h-4 rounded-full bg-indigo-500/15 text-indigo-400 text-[9px] font-bold flex items-center justify-center mt-0.5">1</span>
+              <span>
+                Command Palette (<code>⌘⇧P</code> / <code>Ctrl+Shift+P</code>) → run{" "}
+                <code>Chat: Manage Language Models</code> → <strong className="text-foreground/85">Add Custom Endpoint</strong> (OpenAI-compatible).
+              </span>
+            </li>
+
+            <li className="flex gap-2">
+              <span className="flex-shrink-0 w-4 h-4 rounded-full bg-indigo-500/15 text-indigo-400 text-[9px] font-bold flex items-center justify-center mt-0.5">2</span>
+              <div className="flex-1 space-y-1">
+                <div>When it asks for the <strong className="text-foreground/85">Base URL</strong>, paste:</div>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 px-2 py-1.5 rounded-lg bg-background/60 border border-input font-mono text-[10px] truncate">{proxyBase}</code>
+                  <Button type="button" variant="outline" size="sm" onClick={() => copyToClipboard("baseurl", proxyBase)} className="h-8 rounded-lg text-[10px] gap-1 flex-shrink-0">
+                    {copiedField === "baseurl" ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                    <span>Copy</span>
+                  </Button>
+                </div>
+              </div>
+            </li>
+
+            <li className="flex gap-2">
+              <span className="flex-shrink-0 w-4 h-4 rounded-full bg-indigo-500/15 text-indigo-400 text-[9px] font-bold flex items-center justify-center mt-0.5">3</span>
+              <div className="flex-1 space-y-1">
+                <div>When it asks for the <strong className="text-foreground/85">API key</strong>, paste yours — VS Code stores it securely (it never lands in the JSON):</div>
+                {apiKey ? (
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 px-2 py-1.5 rounded-lg bg-background/60 border border-input font-mono text-[10px] truncate">{apiKey}</code>
+                    <Button type="button" variant="outline" size="sm" onClick={() => copyToClipboard("vscodekey", apiKey)} className="h-8 rounded-lg text-[10px] gap-1 flex-shrink-0">
+                      {copiedField === "vscodekey" ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                      <span>Copy</span>
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="text-[10px] text-amber-400/80">Generate an API key above first.</div>
+                )}
+              </div>
+            </li>
+
+            <li className="flex gap-2">
+              <span className="flex-shrink-0 w-4 h-4 rounded-full bg-indigo-500/15 text-indigo-400 text-[9px] font-bold flex items-center justify-center mt-0.5">4</span>
+              <div className="flex-1 space-y-1.5">
+                <div>
+                  Open the generated config (<code>chatLanguageModels.json</code>) and replace its{" "}
+                  <code>"models"</code> array with your full model list:
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    onClick={copyVscodeModels}
+                    disabled={vscodeState === "loading"}
+                    className="h-9 rounded-lg bg-[#0066b8] hover:bg-[#0a72c9] text-white text-xs font-semibold gap-2"
+                  >
+                    {vscodeState === "loading" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : vscodeState === "done" ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{vscodeState === "done" ? `Copied ${vscodeModelCount} model${vscodeModelCount === 1 ? "" : "s"}!` : "Copy models"}</span>
+                  </Button>
+                  <Button type="button" variant="outline" onClick={downloadVscodeModels} className="h-9 rounded-lg text-xs gap-2">
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download</span>
+                  </Button>
+                </div>
+                {vscodeState === "error" && (
+                  <div className="text-[10px] text-destructive">Couldn't fetch models (endpoint unreachable or clipboard blocked).</div>
+                )}
+              </div>
+            </li>
+          </ol>
+
+          <p className="text-[10px] text-muted-foreground/80 leading-relaxed px-1 flex items-start gap-1.5">
+            <CheckCircle className="w-3 h-3 text-emerald-400/70 flex-shrink-0 mt-0.5" />
+            <span>Your key stays in VS Code's encrypted Secret Storage — the config only references it (<code>{"${input:...}"}</code>), so it's never written in plain text.</span>
+          </p>
         </div>
 
         {/* Usage hint */}
