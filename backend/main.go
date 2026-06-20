@@ -139,6 +139,94 @@ func main() {
 		fmt.Fprintf(w, `{"success":true,"deleted":%d}`, deleted)
 	})
 
+	// Feedback: create / list / update status. Gated by the Bun layer.
+	mux.HandleFunc("/api/feedback", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		if r.Method == http.MethodGet {
+			items, err := repo.GetFeedback(r.Context(), r.URL.Query().Get("status"))
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Error getting feedback: %v", err), http.StatusInternalServerError)
+				return
+			}
+			jsonBytes, _ := json.Marshal(map[string]interface{}{"feedback": items})
+			w.WriteHeader(http.StatusOK)
+			w.Write(jsonBytes)
+			return
+		}
+
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		var payload struct {
+			UserID   string `json:"userId"`
+			Message  string `json:"message"`
+			Category string `json:"category"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Message == "" {
+			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			return
+		}
+		entry := &db.FeedbackEntry{
+			UserID:    payload.UserID,
+			Message:   payload.Message,
+			Category:  payload.Category,
+			Status:    "open",
+			CreatedAt: time.Now().Unix(),
+		}
+		if err := repo.SaveFeedback(r.Context(), entry); err != nil {
+			http.Error(w, fmt.Sprintf("Database error: %v", err), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"success":true}`))
+	})
+
+	// Update feedback status ("open" | "done").
+	mux.HandleFunc("/api/feedback/update", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			ID     int64  `json:"id"`
+			Status string `json:"status"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.ID == 0 {
+			http.Error(w, "Invalid request payload", http.StatusBadRequest)
+			return
+		}
+		if payload.Status != "open" && payload.Status != "done" {
+			payload.Status = "done"
+		}
+		n, err := repo.UpdateFeedbackStatus(r.Context(), payload.ID, payload.Status)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Database error: %v", err), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"success":true,"updated":%d}`, n)
+	})
+
 	// Update a conversation's stored content (used by client-side redaction).
 	mux.HandleFunc("/api/logs/update", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")

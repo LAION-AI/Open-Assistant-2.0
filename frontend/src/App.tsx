@@ -5,6 +5,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { AdminPanel } from "./components/AdminPanel";
 import { UploadsPanel } from "./components/UploadsPanel";
 import { ThemeToggle } from "./components/ThemeToggle";
+import { FeedbackButton } from "./components/FeedbackButton";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
@@ -297,6 +298,8 @@ export function App() {
                 </Button>
               )}
             </div>
+
+            <FeedbackButton />
 
             <ThemeToggle />
 

@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
-import { Modal } from "./Modal";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { ConversationThread } from "./ConversationThread";
 import { PlatformBadge } from "./PlatformBadge";
 import { parseTrace, traceToConversation, type ParsedTrace } from "../lib/traces";
@@ -514,19 +514,17 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
       </CardContent>
     </Card>
 
-    {preview && (
-      <Modal
-        title={
-          <span className="flex items-center gap-2">
-            <PlatformBadge platform={preview.platform} />
-            <span className="truncate">{preview.title}</span>
-          </span>
-        }
-        onClose={() => setPreview(null)}
-      >
-        <ConversationThread conv={traceToConversation(preview)} />
-      </Modal>
-    )}
+    <Dialog open={!!preview} onOpenChange={o => !o && setPreview(null)}>
+      <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-sm pr-6">
+            <PlatformBadge platform={preview?.platform} />
+            <span className="truncate">{preview?.title}</span>
+          </DialogTitle>
+        </DialogHeader>
+        {preview && <ConversationThread conv={traceToConversation(preview)} />}
+      </DialogContent>
+    </Dialog>
     </>
   );
 }

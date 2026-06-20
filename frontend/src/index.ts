@@ -328,6 +328,26 @@ function detectPlatform(req: Request): string {
   return ua.split("/")[0].slice(0, 40) || "api";
 }
 
+// Feedback API is accessible to (a) the configured bearer token — for an
+// automation agent — or (b) a logged-in admin (for the dashboard).
+const FEEDBACK_TOKEN = process.env.FEEDBACK_TOKEN || "";
+
+async function feedbackAuthorized(req: Request): Promise<boolean> {
+  const auth = req.headers.get("Authorization") || "";
+  const token = auth.replace(/^Bearer\s+/i, "").trim();
+  if (FEEDBACK_TOKEN && token && token === FEEDBACK_TOKEN) return true;
+  const cookies = parseCookies(req.headers.get("cookie"));
+  const st = cookies["session"];
+  if (st) {
+    const payload = await verifySessionToken(st);
+    if (payload) {
+      const user = await dbAdapter.getUser(payload.userId);
+      if (user && user.isAdmin === 1) return true;
+    }
+  }
+  return false;
+}
+
 // Resolve a user from an `Authorization: Bearer <api key>` header.
 async function userFromApiKey(req: Request): Promise<any | null> {
   const auth = req.headers.get("Authorization") || "";
@@ -990,6 +1010,85 @@ const server = serve({
         return Response.json({ saved });
       } catch (err: any) {
         console.error("Error uploading traces:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Feedback: POST to submit (logged-in user); GET to list (admin or bearer).
+    "/api/feedback": async req => {
+      if (req.method === "OPTIONS") {
+        return new Response(null, {
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+          },
+        });
+      }
+      try {
+        if (req.method === "GET") {
+          if (!(await feedbackAuthorized(req))) return Response.json({ error: "Unauthorized" }, { status: 401 });
+          const status = new URL(req.url).searchParams.get("status") || "";
+          const r = await fetch(`${BACKEND_URL}/api/feedback?status=${encodeURIComponent(status)}`);
+          return Response.json(await r.json());
+        }
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+
+        // Submitting requires a logged-in user session.
+        const cookies = parseCookies(req.headers.get("cookie"));
+        const sessionToken = cookies["session"];
+        if (!sessionToken) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const payload = await verifySessionToken(sessionToken);
+        if (!payload) return Response.json({ error: "Invalid session" }, { status: 401 });
+
+        const body = await req.json().catch(() => ({}));
+        const message = (body?.message || "").toString().trim();
+        if (!message) return Response.json({ error: "Message required" }, { status: 400 });
+
+        const r = await fetch(`${BACKEND_URL}/api/feedback`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: payload.userId,
+            message: message.slice(0, 5000),
+            category: (body?.category || "").toString().slice(0, 40),
+          }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        return Response.json({ success: true });
+      } catch (err: any) {
+        console.error("Error in /api/feedback:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Mark feedback done/open (admin or bearer) — lets an agent tick items off.
+    "/api/feedback/update": async req => {
+      if (req.method === "OPTIONS") {
+        return new Response(null, {
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+          },
+        });
+      }
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        if (!(await feedbackAuthorized(req))) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const body = await req.json().catch(() => ({}));
+        const id = Number(body?.id);
+        const status = body?.status === "open" ? "open" : "done";
+        if (!id) return Response.json({ error: "id required" }, { status: 400 });
+        const r = await fetch(`${BACKEND_URL}/api/feedback/update`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, status }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        return Response.json(await r.json());
+      } catch (err: any) {
+        console.error("Error in /api/feedback/update:", err);
         return Response.json({ error: err.message }, { status: 500 });
       }
     },

@@ -22,6 +22,7 @@
     "jose": "^6.2.3",
     "katex": "^0.17.0",
     "lucide-react": "^1",
+    "radix-ui": "^1.6.0",
     "react": "^19",
     "react-dom": "^19",
     "react-markdown": "^10.1.0",

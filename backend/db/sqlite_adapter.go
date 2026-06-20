@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite" // Pure Go SQLite driver
 )
@@ -60,6 +61,20 @@ func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
 	// because "duplicate column name" is expected once a migration is applied.
 	_, _ = db.Exec(`ALTER TABLE interaction_logs ADD COLUMN conversation_id TEXT`)
 	_, _ = db.Exec(`ALTER TABLE interaction_logs ADD COLUMN platform TEXT`)
+
+	// Feedback table (user suggestions / criticism).
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS feedback (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id TEXT,
+		message TEXT,
+		category TEXT,
+		status TEXT,
+		created_at INTEGER,
+		resolved_at INTEGER
+	);`); err != nil {
+		db.Close()
+		return nil, err
+	}
 
 	// Collapse redundant per-turn rows: keep only the latest (superset) row for
 	// each conversation. Idempotent — a no-op once conversations are single-row.
@@ -191,6 +206,52 @@ func (r *SQLiteRepository) UpdateContent(ctx context.Context, userID, conversati
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE interaction_logs SET prompt = ?, response = ?, tokens = ? WHERE user_id = ? AND conversation_id = ?`,
 		string(prompt), string(response), tokens, userID, conversationID)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+func (r *SQLiteRepository) SaveFeedback(ctx context.Context, entry *FeedbackEntry) error {
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO feedback (user_id, message, category, status, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		entry.UserID, entry.Message, entry.Category, entry.Status, entry.CreatedAt, entry.ResolvedAt)
+	return err
+}
+
+func (r *SQLiteRepository) GetFeedback(ctx context.Context, status string) ([]*FeedbackEntry, error) {
+	query := `SELECT id, COALESCE(user_id,''), message, COALESCE(category,''), COALESCE(status,'open'), created_at, COALESCE(resolved_at,0) FROM feedback`
+	var args []interface{}
+	if status != "" && status != "all" {
+		query += ` WHERE status = ?`
+		args = append(args, status)
+	}
+	query += ` ORDER BY created_at DESC`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	entries := []*FeedbackEntry{}
+	for rows.Next() {
+		var e FeedbackEntry
+		if err := rows.Scan(&e.ID, &e.UserID, &e.Message, &e.Category, &e.Status, &e.CreatedAt, &e.ResolvedAt); err != nil {
+			return nil, err
+		}
+		entries = append(entries, &e)
+	}
+	return entries, nil
+}
+
+func (r *SQLiteRepository) UpdateFeedbackStatus(ctx context.Context, id int64, status string) (int64, error) {
+	var resolvedAt interface{} = 0
+	if status == "done" {
+		resolvedAt = time.Now().Unix()
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE feedback SET status = ?, resolved_at = ? WHERE id = ?`, status, resolvedAt, id)
 	if err != nil {
 		return 0, err
 	}

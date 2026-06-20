@@ -33,6 +33,16 @@ func ToRawJSON(b []byte) json.RawMessage {
 	return json.RawMessage(quoted)
 }
 
+type FeedbackEntry struct {
+	ID         int64  `json:"id"`
+	UserID     string `json:"userId"`
+	Message    string `json:"message"`
+	Category   string `json:"category"`
+	Status     string `json:"status"` // "open" | "done"
+	CreatedAt  int64  `json:"createdAt"`
+	ResolvedAt int64  `json:"resolvedAt"`
+}
+
 // LogRepository defines the database adapter contract
 type LogRepository interface {
 	SaveLog(ctx context.Context, entry *LogEntry) error
@@ -52,5 +62,11 @@ type LogRepository interface {
 	// UpdateContent rewrites the prompt/response/tokens of an owned conversation
 	// (used by redaction), leaving platform and timestamps untouched.
 	UpdateContent(ctx context.Context, userID, conversationID string, prompt, response json.RawMessage, tokens int) (int64, error)
+
+	// Feedback
+	SaveFeedback(ctx context.Context, entry *FeedbackEntry) error
+	GetFeedback(ctx context.Context, status string) ([]*FeedbackEntry, error)
+	UpdateFeedbackStatus(ctx context.Context, id int64, status string) (int64, error)
+
 	Close() error
 }

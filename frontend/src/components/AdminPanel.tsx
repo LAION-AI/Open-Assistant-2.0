@@ -13,6 +13,7 @@ import {
   type InteractionLog,
 } from "../lib/chat";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import { Checkbox } from "./ui/checkbox";
 import { Users, FileText, Database, Shield, Coins, Calendar, ChevronDown, ChevronUp, RefreshCw, AlertCircle, Brain, MessageSquare, Code, Eye, EyeOff } from "lucide-react";
 
 interface AdminUser {
@@ -26,12 +27,24 @@ interface AdminUser {
   createdAt: number;
 }
 
+interface FeedbackItem {
+  id: number;
+  userId: string;
+  message: string;
+  category: string;
+  status: string; // "open" | "done"
+  createdAt: number;
+  resolvedAt: number;
+}
+
 export function AdminPanel() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [logs, setLogs] = useState<InteractionLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeSubTab, setActiveSubTab] = useState<"users" | "logs">("users");
+  const [activeSubTab, setActiveSubTab] = useState<"users" | "logs" | "feedback">("users");
+  const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
   const [expandedThinkingKeys, setExpandedThinkingKeys] = useState<Set<string>>(new Set());
   const [showRawJsonIds, setShowRawJsonIds] = useState<Set<number>>(new Set());
@@ -83,6 +96,37 @@ export function AdminPanel() {
       setError(err.message || "Failed to load admin dashboard data");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchFeedback = async () => {
+    setFeedbackLoading(true);
+    try {
+      const res = await fetch("/api/feedback?status=all");
+      if (res.ok) {
+        const data = await res.json();
+        setFeedback(data.feedback || []);
+      }
+    } catch (err) {
+      console.warn("Failed to load feedback:", err);
+    } finally {
+      setFeedbackLoading(false);
+    }
+  };
+
+  const toggleFeedback = async (item: FeedbackItem) => {
+    const next = item.status === "done" ? "open" : "done";
+    // Optimistic update.
+    setFeedback(prev => prev.map(f => (f.id === item.id ? { ...f, status: next } : f)));
+    try {
+      await fetch("/api/feedback/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: item.id, status: next }),
+      });
+    } catch {
+      // Revert on failure.
+      setFeedback(prev => prev.map(f => (f.id === item.id ? { ...f, status: item.status } : f)));
     }
   };
 
@@ -195,7 +239,10 @@ export function AdminPanel() {
 
   useEffect(() => {
     fetchData();
+    fetchFeedback();
   }, []);
+
+  const openFeedback = feedback.filter(f => f.status !== "done").length;
 
   // Fold per-turn log rows into conversations (one entry per chat).
   const conversations = groupConversations(logs as InteractionLog[]);
@@ -302,6 +349,21 @@ export function AdminPanel() {
           >
             Conversations ({logsTotal})
           </button>
+          <button
+            onClick={() => setActiveSubTab("feedback")}
+            className={`flex-1 py-2.5 text-xs font-semibold rounded-lg transition-all flex items-center justify-center gap-1.5 ${
+              activeSubTab === "feedback"
+                ? "bg-background/80 text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground hover:bg-muted/30"
+            }`}
+          >
+            <span>Feedback ({feedback.length})</span>
+            {openFeedback > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/25">
+                {openFeedback} open
+              </span>
+            )}
+          </button>
         </div>
 
         <CardContent className="p-0">
@@ -371,6 +433,72 @@ export function AdminPanel() {
                     ))}
                   </tbody>
                 </table>
+              )}
+            </div>
+          ) : activeSubTab === "feedback" ? (
+            /* Feedback List */
+            <div>
+              <div className="flex items-center justify-between px-5 py-3 border-b border-border/40 bg-muted/20">
+                <span className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">
+                  {openFeedback} open · {feedback.length} total
+                </span>
+                <button
+                  onClick={fetchFeedback}
+                  disabled={feedbackLoading}
+                  className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground"
+                  title="Refresh feedback"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${feedbackLoading ? "animate-spin" : ""}`} />
+                </button>
+              </div>
+              {feedback.length === 0 ? (
+                <div className="p-12 text-center text-xs text-muted-foreground">No feedback yet.</div>
+              ) : (
+                <div className="divide-y divide-border/40">
+                  {feedback.map(item => {
+                    const isDone = item.status === "done";
+                    return (
+                      <div
+                        key={item.id}
+                        className={`px-5 py-3.5 flex items-start gap-3 ${isDone ? "opacity-55" : ""}`}
+                      >
+                        <Checkbox
+                          checked={isDone}
+                          onCheckedChange={() => toggleFeedback(item)}
+                          className="mt-0.5 flex-shrink-0"
+                          title={isDone ? "Reopen" : "Mark done"}
+                        />
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <p className={`text-xs leading-relaxed whitespace-pre-wrap break-words ${isDone ? "line-through text-muted-foreground" : "text-foreground/90"}`}>
+                            {item.message}
+                          </p>
+                          <div className="flex items-center gap-2 text-[10px] text-muted-foreground/70">
+                            <span className="flex items-center gap-1">
+                              <Users className="w-3 h-3" /> {getUsername(item.userId)}
+                            </span>
+                            <span>·</span>
+                            <span>{formatTime(item.createdAt)}</span>
+                            {item.category && (
+                              <>
+                                <span>·</span>
+                                <span className="px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">{item.category}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                        <span
+                          className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full border flex-shrink-0 ${
+                            isDone
+                              ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
+                              : "text-amber-400 bg-amber-500/10 border-amber-500/20"
+                          }`}
+                        >
+                          {isDone ? "done" : "open"}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           ) : (
