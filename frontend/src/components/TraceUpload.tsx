@@ -24,6 +24,7 @@ import {
   PawPrint,
   ShieldCheck,
   Bot,
+  Rocket,
   type LucideIcon,
 } from "lucide-react";
 
@@ -99,6 +100,19 @@ const TRACE_SOURCES: TraceSource[] = [
       linux: "~/.codex/sessions",
       windows: "%USERPROFILE%\\.codex\\sessions",
       unknown: "~/.codex/sessions",
+    },
+  },
+  {
+    id: "antigravity",
+    label: "Antigravity",
+    color: "#4285F4",
+    icon: Rocket,
+    // Google Antigravity (Gemini) — one SQLite db per conversation.
+    paths: {
+      mac: "~/.gemini/antigravity/conversations",
+      linux: "~/.gemini/antigravity/conversations",
+      windows: "%USERPROFILE%\\.gemini\\antigravity\\conversations",
+      unknown: "~/.gemini/antigravity/conversations",
     },
   },
   {

@@ -255,6 +255,123 @@ function parseOpencodeDb(dbPath: string): any[] {
   }
 }
 
+// --- Antigravity (Gemini) conversations -------------------------------------
+// Antigravity stores one SQLite DB per conversation; each `steps` row holds a
+// protobuf-encoded payload. There's no public schema, so we recover the
+// human-readable text by raw-walking the protobuf wire format: length-delimited
+// fields that parse as a valid sub-message are recursed into; the rest are
+// treated as leaf strings and kept if they look like content (not ids/base64).
+
+function agIsValidMessage(b: Uint8Array): boolean {
+  let i = 0;
+  if (b.length === 0) return false;
+  while (i < b.length) {
+    let tag = 0, shift = 0;
+    while (true) { if (i >= b.length) return false; const x = b[i++]; tag |= (x & 0x7f) << shift; if (!(x & 0x80)) break; shift += 7; if (shift > 35) return false; }
+    const wt = tag & 7, fn = tag >>> 3;
+    if (fn === 0) return false;
+    if (wt === 0) { while (i < b.length && (b[i] & 0x80)) i++; if (i >= b.length) return false; i++; }
+    else if (wt === 1) { i += 8; if (i > b.length) return false; }
+    else if (wt === 5) { i += 4; if (i > b.length) return false; }
+    else if (wt === 2) { let len = 0, sh = 0; while (true) { if (i >= b.length) return false; const x = b[i++]; len |= (x & 0x7f) << sh; if (!(x & 0x80)) break; sh += 7; if (sh > 35) return false; } if (i + len > b.length) return false; i += len; }
+    else return false;
+  }
+  return true;
+}
+
+function agCleanText(s: string): string {
+  let r = "";
+  for (let k = 0; k < s.length; k++) {
+    const c = s.charCodeAt(k);
+    if (c === 9 || c === 10 || c >= 32) r += s[k];
+  }
+  return r.trim();
+}
+
+function agIsContent(s: string): boolean {
+  if (s.length < 6) return false;
+  if (!/[A-Za-z]/.test(s)) return false;
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/.test(s)) return false; // uuid
+  if (s.length > 20 && /^[A-Za-z0-9+/=_-]+$/.test(s) && !/[\s{}":/]/.test(s)) return false; // base64
+  if (/^(sessionID|req_[a-z]|toolu_|cascade|reqid)/i.test(s) && !/\s/.test(s) && s.length < 60) return false;
+  return true;
+}
+
+function agExtractText(buf: Uint8Array): string {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const dec = new TextDecoder("utf-8", { fatal: false });
+  function walk(b: Uint8Array, depth: number) {
+    if (depth > 16) return;
+    let i = 0;
+    while (i < b.length) {
+      let tag = 0, shift = 0, ok = true;
+      while (true) { if (i >= b.length) { ok = false; break; } const x = b[i++]; tag |= (x & 0x7f) << shift; if (!(x & 0x80)) break; shift += 7; if (shift > 35) { ok = false; break; } }
+      if (!ok) break;
+      const wt = tag & 7;
+      if (wt === 0) { while (i < b.length && (b[i] & 0x80)) i++; i++; }
+      else if (wt === 1) i += 8;
+      else if (wt === 5) i += 4;
+      else if (wt === 2) {
+        let len = 0, sh = 0, ok2 = true;
+        while (true) { if (i >= b.length) { ok2 = false; break; } const x = b[i++]; len |= (x & 0x7f) << sh; if (!(x & 0x80)) break; sh += 7; if (sh > 35) { ok2 = false; break; } }
+        if (!ok2 || i + len > b.length) break;
+        const sub = b.subarray(i, i + len); i += len;
+        if (len > 2 && agIsValidMessage(sub)) walk(sub, depth + 1);
+        else { const s = agCleanText(dec.decode(sub)); if (agIsContent(s) && !seen.has(s)) { seen.add(s); out.push(s); } }
+      } else break;
+    }
+  }
+  walk(buf, 0);
+  return out.join("\n").trim();
+}
+
+function parseAntigravityDb(dbPath: string): any[] {
+  const db = new Database(dbPath, { readwrite: true });
+  try {
+    const steps = db.query("SELECT idx, step_type, step_payload FROM steps ORDER BY idx ASC").all() as any[];
+    const messages: any[] = [];
+    for (const s of steps) {
+      if (!s.step_payload) continue;
+      const buf: Uint8Array = s.step_payload instanceof Uint8Array ? s.step_payload : new Uint8Array(s.step_payload);
+      let text = agExtractText(buf);
+      if (!text) continue;
+      if (text.length > 200000) text = text.slice(0, 200000);
+      messages.push({ role: s.step_type === 14 ? "user" : "assistant", content: text });
+    }
+    if (messages.length === 0) return [];
+    const firstUser = messages.find(m => m.role === "user");
+    const title = (firstUser?.content || "Antigravity conversation").replace(/\s+/g, " ").trim().slice(0, 80);
+    const turnCount = Math.max(messages.filter(m => m.role === "user").length, 1);
+    return [{
+      ok: true,
+      fileName: dbPath.split("/").pop() || "antigravity.db",
+      platform: "antigravity",
+      model: "",
+      messages,
+      turnCount,
+      title,
+    }];
+  } finally {
+    db.close();
+  }
+}
+
+// Detect the SQLite schema and parse with the matching extractor.
+function parseSqliteDb(dbPath: string): any[] {
+  let tables: string[] = [];
+  try {
+    const db = new Database(dbPath, { readwrite: true });
+    tables = (db.query("SELECT name FROM sqlite_master WHERE type='table'").all() as any[]).map((r: any) => r.name);
+    db.close();
+  } catch {
+    return [];
+  }
+  if (tables.includes("session") && tables.includes("message") && tables.includes("part")) return parseOpencodeDb(dbPath);
+  if (tables.includes("steps") && tables.includes("trajectory_meta")) return parseAntigravityDb(dbPath);
+  return [];
+}
+
 // Shared chat-completion forwarder used by both the cookie-auth web UI and the
 // API-key proxy for external tools. Resolves the model (client choice wins),
 // routes through the Go logging proxy, and returns the streamed response.
@@ -955,7 +1072,7 @@ const server = serve({
           const shm = form.get("shm");
           if (wal instanceof File) writeFileSync(base + "-wal", Buffer.from(await wal.arrayBuffer()));
           if (shm instanceof File) writeFileSync(base + "-shm", Buffer.from(await shm.arrayBuffer()));
-          const traces = parseOpencodeDb(base);
+          const traces = parseSqliteDb(base);
           return Response.json({ traces });
         } finally {
           rmSync(dir, { recursive: true, force: true });
