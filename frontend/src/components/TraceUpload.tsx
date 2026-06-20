@@ -23,6 +23,7 @@ import {
   Zap,
   PawPrint,
   ShieldCheck,
+  Bot,
   type LucideIcon,
 } from "lucide-react";
 
@@ -88,15 +89,30 @@ const TRACE_SOURCES: TraceSource[] = [
     },
   },
   {
+    id: "codex",
+    label: "Codex",
+    color: "#10a37f",
+    icon: Bot,
+    // OpenAI Codex CLI rollout transcripts.
+    paths: {
+      mac: "~/.codex/sessions",
+      linux: "~/.codex/sessions",
+      windows: "%USERPROFILE%\\.codex\\sessions",
+      unknown: "~/.codex/sessions",
+    },
+  },
+  {
     id: "hermes",
     label: "Hermes Agent",
     color: "#8b5cf6",
     icon: Zap,
+    // Nous Hermes Agent. Modern builds use ~/.hermes/state.db (SQLite); legacy
+    // JSONL transcripts live under ~/.hermes/sessions.
     paths: {
-      mac: "~/.hermes/sessions",
-      linux: "~/.hermes/sessions",
-      windows: "%USERPROFILE%\\.hermes\\sessions",
-      unknown: "~/.hermes/sessions",
+      mac: "~/.hermes",
+      linux: "~/.hermes",
+      windows: "%USERPROFILE%\\.hermes",
+      unknown: "~/.hermes",
     },
   },
   {
@@ -104,11 +120,12 @@ const TRACE_SOURCES: TraceSource[] = [
     label: "OpenClaw",
     color: "#f97316",
     icon: PawPrint,
+    // OpenClaw stores transcripts at ~/.openclaw/agents/<id>/sessions/<id>.jsonl
     paths: {
-      mac: "~/.openclaw/sessions",
-      linux: "~/.openclaw/sessions",
-      windows: "%USERPROFILE%\\.openclaw\\sessions",
-      unknown: "~/.openclaw/sessions",
+      mac: "~/.openclaw/agents",
+      linux: "~/.openclaw/agents",
+      windows: "%USERPROFILE%\\.openclaw\\agents",
+      unknown: "~/.openclaw/agents",
     },
   },
 ];

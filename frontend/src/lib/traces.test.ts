@@ -145,4 +145,34 @@ describe("parseTrace", () => {
     const t = parseTrace("e.jsonl", "chatSessions/e.jsonl", JSON.stringify({ kind: 0, v: { requests: [] } }));
     expect(t.ok).toBe(false);
   });
+
+  test("OpenAI Codex CLI rollout format", () => {
+    const lines = [
+      JSON.stringify({ timestamp: "t", type: "session_meta", payload: { id: "x", cwd: "/p" } }),
+      JSON.stringify({ timestamp: "t", type: "turn_context", payload: { model: "gpt-5-codex" } }),
+      JSON.stringify({ timestamp: "t", type: "event_msg", payload: { type: "task_started" } }),
+      JSON.stringify({
+        type: "response_item",
+        payload: { type: "message", role: "user", content: [{ type: "input_text", text: "fix the bug" }] },
+      }),
+      JSON.stringify({ type: "response_item", payload: { type: "reasoning", summary: [{ type: "summary_text", text: "looking" }] } }),
+      JSON.stringify({
+        type: "response_item",
+        payload: { type: "function_call", name: "apply_patch", arguments: '{"path":"a.ts"}' },
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "Fixed it." }] },
+      }),
+    ].join("\n");
+    const t = parseTrace("rollout-2026.jsonl", "sessions/2026/06/rollout-2026.jsonl", lines);
+    expect(t.ok).toBe(true);
+    expect(t.platform).toBe("codex");
+    expect(t.model).toBe("gpt-5-codex");
+    expect(t.messages.find(m => m.role === "user")?.content).toBe("fix the bug");
+    // function_call became an assistant tool call
+    expect(t.messages.some(m => m.tool_calls?.[0]?.function?.name === "apply_patch")).toBe(true);
+    // reasoning summary attached to the following assistant message
+    expect(t.messages.find(m => m.role === "assistant" && m.content === "Fixed it.")?.reasoning).toBe("looking");
+  });
 });
