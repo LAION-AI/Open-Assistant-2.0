@@ -18,8 +18,11 @@ import {
   verifySessionToken,
   createChallengeToken,
   verifyChallengeToken,
+  createEmailActionToken,
+  verifyEmailActionToken,
 } from "./lib/session";
 import { parseCookies, serializeCookie } from "./lib/cookies";
+import { emailEnabled, sendVerificationEmail, sendPasswordResetEmail } from "./lib/email";
 import indexHtml from "./index.html";
 
 const RP_NAME = "Open Assistant 2.0";
@@ -34,14 +37,17 @@ const ALLOWED_HOSTS = (process.env.ALLOWED_HOSTS || "localhost,openassistant.io"
 // Helper to determine dynamic RP ID and expectedOrigin based on ALLOWED_HOSTS
 function getRpIdAndOrigin(req: Request) {
   const url = new URL(req.url);
-  const hostname = url.hostname;
 
-  // Check if hostname is in ALLOWED_HOSTS
+  // Behind a TLS-terminating reverse proxy (e.g. Caddy) the server sees plain
+  // HTTP, so trust X-Forwarded-* to reconstruct the browser's real https origin —
+  // otherwise WebAuthn's expectedOrigin won't match and verification fails.
+  const host = (req.headers.get("x-forwarded-host") || url.host).split(",")[0].trim();
+  const proto = (req.headers.get("x-forwarded-proto") || url.protocol.replace(":", "")).split(",")[0].trim();
+  const hostname = host.split(":")[0];
+
   const isAllowed = ALLOWED_HOSTS.includes(hostname);
   const rpId = isAllowed ? hostname : (ALLOWED_HOSTS[0] || "localhost");
-
-  // WebAuthn expects origin matching protocol + host (including port in development)
-  const origin = `${url.protocol}//${url.host}`;
+  const origin = `${proto}://${host}`;
   return { rpId, origin };
 }
 
@@ -423,6 +429,29 @@ async function proxyChatCompletion(
   });
 }
 
+// --- Session helpers (shared by passkey + email auth) ----------------------
+const SESSION_MAX_AGE = 7 * 24 * 3600;
+function sessionSetCookie(token: string) {
+  return serializeCookie("session", token, { httpOnly: true, secure: false, path: "/", maxAge: SESSION_MAX_AGE });
+}
+async function loginResponse(user: { id: string; username: string }, body: any) {
+  const token = await createSessionToken({ userId: user.id, username: user.username });
+  const headers = new Headers({ "Content-Type": "application/json" });
+  headers.append("Set-Cookie", sessionSetCookie(token));
+  return new Response(JSON.stringify(body), { headers });
+}
+
+async function userFromSession(req: Request) {
+  const cookies = parseCookies(req.headers.get("cookie"));
+  const st = cookies["session"];
+  if (!st) return null;
+  const payload = await verifySessionToken(st);
+  if (!payload) return null;
+  return dbAdapter.getUser(payload.userId);
+}
+
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
 // Best-effort identification of which tool a proxied request came from. Honors
 // an explicit X-Platform header, otherwise sniffs the User-Agent.
 function detectPlatform(req: Request): string {
@@ -478,6 +507,8 @@ const server = serve({
   // Chat completions can stream for a while (long reasoning); the default 10s
   // idle timeout cuts them off. Allow up to 180s of idle between chunks.
   idleTimeout: 180,
+  // Trace SQLite uploads (OpenCode/Antigravity) can be large.
+  maxRequestBodySize: 256 * 1024 * 1024,
   development: process.env.NODE_ENV !== "production" && {
     hmr: true,
     console: true,
@@ -504,7 +535,249 @@ const server = serve({
         return Response.json({ error: "User not found" }, { status: 404 });
       }
 
-      return Response.json({ user });
+      const { passwordHash, ...safe } = user as any;
+      const creds = await dbAdapter.getUserCredentials(user.id);
+      return Response.json({ user: { ...safe, hasPassword: !!passwordHash, hasPasskey: creds.length > 0 } });
+    },
+
+    // --- Email + password auth (passkeys remain the recommended default) ---
+
+    // Whether email login is available (drives the UI).
+    "/api/auth/email/status": async () => Response.json({ enabled: true, emailVerification: emailEnabled }),
+
+    "/api/auth/email/register": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const { username, email, password } = await req.json();
+        const u = (username || "").trim();
+        const e = (email || "").trim().toLowerCase();
+        if (u.length < 3) return Response.json({ error: "Username must be at least 3 characters" }, { status: 400 });
+        if (!EMAIL_RE.test(e)) return Response.json({ error: "Enter a valid email address" }, { status: 400 });
+        if ((password || "").length < 8) return Response.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+        if (await dbAdapter.getUserByUsername(u)) return Response.json({ error: "Username already taken" }, { status: 400 });
+        if (await dbAdapter.getUserByEmail(e)) return Response.json({ error: "Email already registered" }, { status: 400 });
+
+        const hash = await Bun.password.hash(password);
+        const user = await dbAdapter.createEmailUser(u, e, hash);
+
+        if (emailEnabled) {
+          const token = await createEmailActionToken({ purpose: "verify", userId: user.id }, "24h");
+          const link = `${getRpIdAndOrigin(req).origin}/api/auth/email/verify?token=${encodeURIComponent(token)}`;
+          await sendVerificationEmail(e, link);
+          return Response.json({ success: true, needsVerification: true });
+        }
+        // No SMTP configured — auto-verify and sign in.
+        await dbAdapter.setEmailVerified(user.id, true);
+        return loginResponse(user, { success: true, verified: true, user: { id: user.id, username: user.username } });
+      } catch (err: any) {
+        console.error("email register error:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Clicking the verification link signs the user in and redirects to the app.
+    "/api/auth/email/verify": async req => {
+      const token = new URL(req.url).searchParams.get("token") || "";
+      const payload = await verifyEmailActionToken(token, "verify");
+      if (!payload) {
+        return new Response(null, { status: 303, headers: { Location: "/?verify=failed" } });
+      }
+      await dbAdapter.setEmailVerified(payload.userId, true);
+      const user = await dbAdapter.getUser(payload.userId);
+      const headers = new Headers({ Location: "/?verified=1" });
+      if (user) {
+        headers.append("Set-Cookie", sessionSetCookie(await createSessionToken({ userId: user.id, username: user.username })));
+      }
+      return new Response(null, { status: 303, headers });
+    },
+
+    "/api/auth/email/login": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const { email, password } = await req.json();
+        const user = await dbAdapter.getUserByEmail((email || "").trim().toLowerCase());
+        if (!user || !user.passwordHash || !(await Bun.password.verify(password || "", user.passwordHash))) {
+          return Response.json({ error: "Invalid email or password" }, { status: 401 });
+        }
+        if (emailEnabled && !user.emailVerified) {
+          return Response.json({ error: "Please verify your email first", needsVerification: true }, { status: 403 });
+        }
+        return loginResponse(user, { success: true, user: { id: user.id, username: user.username } });
+      } catch (err: any) {
+        console.error("email login error:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    "/api/auth/email/resend": async req => {
+      try {
+        const { email } = await req.json().catch(() => ({}));
+        const user = await dbAdapter.getUserByEmail((email || "").trim().toLowerCase());
+        if (user && !user.emailVerified && emailEnabled) {
+          const token = await createEmailActionToken({ purpose: "verify", userId: user.id }, "24h");
+          await sendVerificationEmail(user.email!, `${getRpIdAndOrigin(req).origin}/api/auth/email/verify?token=${encodeURIComponent(token)}`);
+        }
+        return Response.json({ success: true });
+      } catch {
+        return Response.json({ success: true });
+      }
+    },
+
+    "/api/auth/email/forgot": async req => {
+      try {
+        const { email } = await req.json().catch(() => ({}));
+        const user = await dbAdapter.getUserByEmail((email || "").trim().toLowerCase());
+        // Always return success (no account enumeration).
+        if (user && user.passwordHash && emailEnabled) {
+          const token = await createEmailActionToken({ purpose: "reset", userId: user.id }, "1h");
+          await sendPasswordResetEmail(user.email!, `${getRpIdAndOrigin(req).origin}/?reset=${encodeURIComponent(token)}`);
+        }
+        return Response.json({ success: true });
+      } catch {
+        return Response.json({ success: true });
+      }
+    },
+
+    "/api/auth/email/reset": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const { token, password } = await req.json();
+        const payload = await verifyEmailActionToken(token || "", "reset");
+        if (!payload) return Response.json({ error: "Invalid or expired reset link" }, { status: 400 });
+        if ((password || "").length < 8) return Response.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+        const hash = await Bun.password.hash(password);
+        await dbAdapter.setPassword(payload.userId, hash);
+        await dbAdapter.setEmailVerified(payload.userId, true);
+        const user = await dbAdapter.getUser(payload.userId);
+        if (!user) return Response.json({ error: "User not found" }, { status: 404 });
+        return loginResponse(user, { success: true, user: { id: user.id, username: user.username } });
+      } catch (err: any) {
+        console.error("email reset error:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // --- Account linking (logged-in user adds another login method) ---
+
+    // Add email + password to the current account (or change the password).
+    "/api/user/set-password": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const user = await userFromSession(req);
+        if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const { email, password } = await req.json();
+        if ((password || "").length < 8) return Response.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+
+        const hash = await Bun.password.hash(password);
+        let needsVerification = false;
+
+        if (!user.email) {
+          const e = (email || "").trim().toLowerCase();
+          if (!EMAIL_RE.test(e)) return Response.json({ error: "Enter a valid email address" }, { status: 400 });
+          const taken = await dbAdapter.getUserByEmail(e);
+          if (taken && taken.id !== user.id) return Response.json({ error: "Email already in use" }, { status: 400 });
+          await dbAdapter.setEmail(user.id, e);
+          await dbAdapter.setPassword(user.id, hash);
+          if (emailEnabled) {
+            await dbAdapter.setEmailVerified(user.id, false);
+            const token = await createEmailActionToken({ purpose: "verify", userId: user.id }, "24h");
+            await sendVerificationEmail(e, `${getRpIdAndOrigin(req).origin}/api/auth/email/verify?token=${encodeURIComponent(token)}`);
+            needsVerification = true;
+          } else {
+            await dbAdapter.setEmailVerified(user.id, true);
+          }
+        } else {
+          // Already has an email — just (re)set the password.
+          await dbAdapter.setPassword(user.id, hash);
+        }
+        return Response.json({ success: true, needsVerification });
+      } catch (err: any) {
+        console.error("set-password error:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Add a passkey to the current account — registration options.
+    "/api/auth/passkey/add/options": async req => {
+      try {
+        const user = await userFromSession(req);
+        if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const { rpId } = getRpIdAndOrigin(req);
+        const creds = await dbAdapter.getUserCredentials(user.id);
+        const options = await generateRegistrationOptions({
+          rpName: RP_NAME,
+          rpID: rpId,
+          userID: new TextEncoder().encode(user.id),
+          userName: user.username,
+          userDisplayName: user.username,
+          attestationType: "none",
+          authenticatorSelection: { residentKey: "required", requireResidentKey: true, userVerification: "preferred" },
+          excludeCredentials: creds.map(c => ({ id: c.id, transports: c.transports as any })),
+        });
+        const challengeToken = await createChallengeToken({ challenge: options.challenge, username: user.username, userId: user.id });
+        return new Response(JSON.stringify(options), {
+          headers: {
+            "Content-Type": "application/json",
+            "Set-Cookie": serializeCookie("challenge_token", challengeToken, { httpOnly: true, secure: false, path: "/", maxAge: 300 }),
+          },
+        });
+      } catch (err: any) {
+        console.error("passkey add options error:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Add a passkey to the current account — verify + attach.
+    "/api/auth/passkey/add/verify": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const user = await userFromSession(req);
+        if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+
+        const registrationResponse = await req.json();
+        const cookies = parseCookies(req.headers.get("cookie"));
+        const storedData = await verifyChallengeToken(cookies["challenge_token"] || "");
+        if (!storedData || storedData.userId !== user.id) {
+          return Response.json({ error: "Challenge expired or invalid" }, { status: 400 });
+        }
+
+        const { rpId, origin } = getRpIdAndOrigin(req);
+        const verification = await verifyRegistrationResponse({
+          response: registrationResponse,
+          expectedChallenge: storedData.challenge,
+          expectedOrigin: origin,
+          expectedRPID: rpId,
+        });
+        if (!verification.verified || !verification.registrationInfo) {
+          return Response.json({ error: "Verification failed" }, { status: 400 });
+        }
+
+        const { credential, credentialDeviceType, credentialBackedUp, aaguid } = verification.registrationInfo;
+        const base64PublicKey = Buffer.from(credential.publicKey).toString("base64url");
+        const base64CredentialID = typeof credential.id === "string" ? credential.id : Buffer.from(credential.id).toString("base64url");
+
+        await dbAdapter.saveCredential(user.id, {
+          id: base64CredentialID,
+          userId: user.id,
+          publicKey: base64PublicKey,
+          counter: credential.counter,
+          backedUp: credentialBackedUp ? 1 : 0,
+          deviceType: credentialDeviceType,
+          transports: credential.transports || ["internal"],
+          aaguid: aaguid || "",
+          name: registrationResponse.authenticatorAttachment || "authenticator",
+        });
+
+        return new Response(JSON.stringify({ success: true }), {
+          headers: {
+            "Content-Type": "application/json",
+            "Set-Cookie": serializeCookie("challenge_token", "", { httpOnly: true, secure: false, path: "/", maxAge: 0 }),
+          },
+        });
+      } catch (err: any) {
+        console.error("passkey add verify error:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
     },
 
     // Log out user

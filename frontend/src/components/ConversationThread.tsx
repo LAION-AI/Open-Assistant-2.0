@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { Markdown } from "./Markdown";
 import {
   buildConversationTurns,
@@ -9,13 +9,28 @@ import {
 } from "../lib/chat";
 import { Brain, ChevronDown, FileCode, Wrench } from "lucide-react";
 
+// Render in chunks so huge conversations (thousands of turns) don't lock up the
+// browser — more turns load as you scroll. Individual giant messages are also
+// truncated on screen (the full text is still stored/uploaded).
+const CHUNK = 20;
+const TEXT_CAP = 8000;
+const PRE_CAP = 50000;
+
 function MessageContent({ content }: { content: any }) {
-  if (typeof content === "string") return <span className="whitespace-pre-wrap">{content}</span>;
+  if (typeof content === "string") {
+    const long = content.length > TEXT_CAP;
+    return (
+      <span className="whitespace-pre-wrap break-words">
+        {long ? content.slice(0, TEXT_CAP) : content}
+        {long && <span className="text-muted-foreground/50"> …(+{(content.length - TEXT_CAP).toLocaleString()} chars)</span>}
+      </span>
+    );
+  }
   if (Array.isArray(content)) {
     return (
       <div className="space-y-2">
         {content.map((part: any, i: number) => {
-          if (part?.type === "text") return <span key={i} className="whitespace-pre-wrap">{part.text}</span>;
+          if (part?.type === "text") return <MessageContent key={i} content={part.text} />;
           if (part?.type === "image_url") {
             return (
               <div key={i} className="mt-1.5 max-w-[160px] rounded-lg overflow-hidden border border-border/60">
@@ -42,10 +57,38 @@ export function ConversationThread({ conv }: { conv: Conversation }) {
       return next;
     });
 
-  const { systemMsgs, turns } = buildConversationTurns(conv);
+  // Memoize — rebuilding thousands of turns on every toggle would be wasteful.
+  const { systemMsgs, turns } = useMemo(() => buildConversationTurns(conv), [conv]);
+
+  const [visible, setVisible] = useState(() => Math.min(CHUNK, turns.length));
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // Auto-load the next chunk when the sentinel scrolls into view.
+  useEffect(() => {
+    if (visible >= turns.length) return;
+    const el = sentinelRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      entries => {
+        if (entries[0]?.isIntersecting) setVisible(v => Math.min(v + CHUNK, turns.length));
+      },
+      { rootMargin: "300px" },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [visible, turns.length]);
+
+  const shown = turns.slice(0, visible);
+  const remaining = turns.length - visible;
 
   return (
     <div className="rounded-xl border border-border/40 bg-background/30 p-4 space-y-3 overflow-hidden">
+      {turns.length > CHUNK && (
+        <div className="text-[10px] text-muted-foreground/70 pb-1">
+          Showing {Math.min(visible, turns.length).toLocaleString()} of {turns.length.toLocaleString()} turns
+        </div>
+      )}
+
       {systemMsgs.map((msg: any, i: number) => (
         <div key={`sys-${i}`} className="w-full">
           <div className="text-[9px] font-bold uppercase tracking-widest text-amber-400/70 mb-1 px-1">System</div>
@@ -55,12 +98,16 @@ export function ConversationThread({ conv }: { conv: Conversation }) {
         </div>
       ))}
 
-      {turns.map((turn: Turn, ti: number) => {
+      {shown.map((turn: Turn, ti: number) => {
         const a = turn.assistant;
         const split = a ? splitThinking(a.content, a.reasoning_content) : { thinking: "", text: "" };
         const tools = a ? toolCallsOf(a) : [];
         const thinkKey = `${conv.id}:${ti}:think`;
         const thinkOpen = openKeys.has(thinkKey);
+        const textKey = `${conv.id}:${ti}:text`;
+        const longText = split.text.length > TEXT_CAP;
+        const textExpanded = openKeys.has(textKey);
+        const displayText = longText && !textExpanded ? split.text.slice(0, TEXT_CAP) : split.text;
 
         return (
           <div key={ti} className={`space-y-2 ${turn.isFinal ? "pt-2 border-t border-border/20" : ""}`}>
@@ -99,7 +146,7 @@ export function ConversationThread({ conv }: { conv: Conversation }) {
                     </button>
                     {thinkOpen && (
                       <div className="mt-1.5 px-3.5 py-3 bg-violet-950/15 border border-violet-500/10 rounded-xl text-muted-foreground/80 max-h-[360px] overflow-y-auto">
-                        <Markdown compact>{split.thinking}</Markdown>
+                        <Markdown compact>{split.thinking.slice(0, PRE_CAP)}</Markdown>
                       </div>
                     )}
                   </div>
@@ -108,7 +155,12 @@ export function ConversationThread({ conv }: { conv: Conversation }) {
                 {/* Visible answer */}
                 {split.text && (
                   <div className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl rounded-bl-md text-[11.5px] ${turn.isFinal ? "bg-emerald-500/8 border border-emerald-500/20" : "bg-muted/40 border border-border/40"} text-foreground/90`}>
-                    <Markdown compact>{split.text}</Markdown>
+                    <Markdown compact>{displayText}</Markdown>
+                    {longText && (
+                      <button onClick={() => toggle(textKey)} className="mt-1 text-[10px] text-indigo-400 hover:underline">
+                        {textExpanded ? "Show less" : `Show full message (${split.text.length.toLocaleString()} chars)`}
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -117,6 +169,7 @@ export function ConversationThread({ conv }: { conv: Conversation }) {
                   const isFile = !!(tc.path || tc.content);
                   const key = `${conv.id}:${ti}:tool:${i}`;
                   const open = openKeys.has(key);
+                  const body = (tc.content ?? tc.raw) || "";
                   return (
                     <div key={key} className="w-full max-w-[85%] mt-2">
                       <button
@@ -139,7 +192,8 @@ export function ConversationThread({ conv }: { conv: Conversation }) {
                             </div>
                           )}
                           <pre className="p-3 overflow-x-auto font-mono text-[10px] leading-normal text-muted-foreground/90 max-h-[400px] overflow-y-auto whitespace-pre-wrap">
-                            {tc.content ?? tc.raw}
+                            {body.slice(0, PRE_CAP)}
+                            {body.length > PRE_CAP && `\n…(+${(body.length - PRE_CAP).toLocaleString()} chars)`}
                           </pre>
                         </div>
                       )}
@@ -151,6 +205,18 @@ export function ConversationThread({ conv }: { conv: Conversation }) {
           </div>
         );
       })}
+
+      {/* Load-more sentinel (auto) + manual fallback */}
+      {remaining > 0 && (
+        <div ref={sentinelRef} className="pt-2">
+          <button
+            onClick={() => setVisible(v => Math.min(v + CHUNK, turns.length))}
+            className="w-full py-2 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/50 text-[11px] font-semibold text-muted-foreground hover:text-foreground transition-colors"
+          >
+            Load {Math.min(CHUNK, remaining)} more ({remaining.toLocaleString()} remaining)
+          </button>
+        </div>
+      )}
     </div>
   );
 }

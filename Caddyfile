@@ -1,0 +1,10 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# Automatic HTTPS (Let's Encrypt) for your domain, reverse-proxied to the
+# frontend. The frontend talks to the backend internally over the compose
+# network, so the Go backend is never exposed publicly.
+{$DOMAIN} {
+	reverse_proxy frontend:3000
+}

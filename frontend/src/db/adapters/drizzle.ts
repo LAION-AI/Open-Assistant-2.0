@@ -26,6 +26,43 @@ export class DrizzleAdapter implements DatabaseAdapter {
     return res || null;
   }
 
+  async getUserByEmail(email: string): Promise<UserRecord | null> {
+    if (!email) return null;
+    // Case-insensitive email match.
+    const res = await this.db.select().from(users).where(eq(users.email, email.toLowerCase())).get();
+    return res || null;
+  }
+
+  async createEmailUser(username: string, email: string, passwordHash: string): Promise<UserRecord> {
+    const id = crypto.randomUUID();
+    const isFirstUser = (await this.db.select().from(users).all()).length === 0;
+    const isAdmin = isFirstUser ? 1 : 0;
+    const newUser = {
+      id,
+      username,
+      email: email.toLowerCase(),
+      passwordHash,
+      emailVerified: 0,
+      credits: 1000,
+      isAdmin,
+      createdAt: Date.now(),
+    };
+    await this.db.insert(users).values(newUser).run();
+    return { id, username, email: email.toLowerCase(), passwordHash, emailVerified: 0, credits: 1000, isAdmin };
+  }
+
+  async setPassword(id: string, passwordHash: string): Promise<void> {
+    await this.db.update(users).set({ passwordHash }).where(eq(users.id, id)).run();
+  }
+
+  async setEmail(id: string, email: string): Promise<void> {
+    await this.db.update(users).set({ email: email.toLowerCase() }).where(eq(users.id, id)).run();
+  }
+
+  async setEmailVerified(id: string, verified: boolean): Promise<void> {
+    await this.db.update(users).set({ emailVerified: verified ? 1 : 0 }).where(eq(users.id, id)).run();
+  }
+
   async setApiKey(id: string, apiKey: string | null): Promise<void> {
     await this.db.update(users).set({ apiKey }).where(eq(users.id, id)).run();
   }

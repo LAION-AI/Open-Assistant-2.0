@@ -4,6 +4,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Server, Key, Brain, CheckCircle, HelpCircle, RefreshCw, Copy, Check, Trash2, Network, Code2, Download, Loader2 } from "lucide-react";
+import { LoginMethods } from "./LoginMethods";
 
 interface User {
   id: string;
@@ -14,6 +15,10 @@ interface User {
   byoeKey?: string | null;
   byoeModel?: string | null;
   apiKey?: string | null;
+  email?: string | null;
+  emailVerified?: number;
+  hasPassword?: boolean;
+  hasPasskey?: boolean;
 }
 
 interface SettingsPanelProps {
@@ -245,6 +250,7 @@ export function SettingsPanel({ user, onUpdateUser }: SettingsPanelProps) {
 
   return (
     <div className="space-y-6 max-w-xl mx-auto">
+    <LoginMethods user={user} onUpdateUser={onUpdateUser} />
     <Card className="bg-card/40 backdrop-blur-md border border-border/80 shadow-xl overflow-hidden">
       <CardHeader className="border-b border-border/50 bg-card/50">
         <CardTitle className="flex items-center gap-2 text-xl font-bold">

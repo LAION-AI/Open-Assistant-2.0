@@ -4,6 +4,10 @@
 .env.test.local
 .env.production.local
 .env.local
+frontend.env
+
+# deploy state (bind-mounted persistent data)
+/data/
 
 # caches
 .eslintcache

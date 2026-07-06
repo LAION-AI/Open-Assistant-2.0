@@ -69,6 +69,46 @@ export async function registerPasskey(username: string) {
   }
 }
 
+// Add a passkey to the already-logged-in account (Settings → Login methods).
+export async function addPasskey() {
+  try {
+    const optionsRes = await fetch("/api/auth/passkey/add/options", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!optionsRes.ok) {
+      const err = await optionsRes.json();
+      throw new Error(err.error || "Failed to start passkey registration");
+    }
+    const creationOptionsJSON = await optionsRes.json();
+    const publicKey = PublicKeyCredential.parseCreationOptionsFromJSON(creationOptionsJSON);
+
+    let credential;
+    try {
+      credential = (await navigator.credentials.create({ publicKey })) as any;
+    } catch (err: any) {
+      if (err.name === "InvalidStateError") throw new Error("This device already has a passkey for this account.");
+      if (err.name === "NotAllowedError") throw new Error("Passkey creation cancelled.");
+      throw err;
+    }
+
+    const encodedResponse = credential.toJSON();
+    const verifyRes = await fetch("/api/auth/passkey/add/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(encodedResponse),
+    });
+    if (!verifyRes.ok) {
+      const err = await verifyRes.json();
+      throw new Error(err.error || "Failed to add passkey");
+    }
+    return await verifyRes.json();
+  } catch (err: any) {
+    console.error("Add passkey error:", err);
+    return { error: err.message };
+  }
+}
+
 export async function authenticatePasskey() {
   try {
     const optionsRes = await fetch("/api/auth/login/options", {

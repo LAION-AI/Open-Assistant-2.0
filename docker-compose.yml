@@ -1,0 +1,48 @@
+# Open Assistant 2.0 — production stack (Caddy + frontend + backend).
+# All persistent state lives in ./data (bind mounts) — nothing in named volumes.
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy/data:/data
+      - ./data/caddy/config:/config
+    depends_on:
+      - frontend
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    env_file:
+      - ./frontend.env          # JWT_SECRET, FEEDBACK_TOKEN
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      BACKEND_URL: http://backend:8080
+      USER_DB: /data/user.db
+      ALLOWED_HOSTS: ${DOMAIN}   # WebAuthn RP id — must match your domain
+      # SMTP for email verification / password reset (from root .env)
+      EMAIL: ${EMAIL:-}
+      EMAIL_PASSWORD: ${EMAIL_PASSWORD:-}
+      EMAIL_OUTGOING_SERVER: ${EMAIL_OUTGOING_SERVER:-}
+      EMAIL_OUTGOING_SMTP_PORT: ${EMAIL_OUTGOING_SMTP_PORT:-587}
+    volumes:
+      - ./data/frontend:/data    # user.db (accounts, passkeys, credits)
+    depends_on:
+      - backend
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      DB_PATH: /data/logs.db
+    volumes:
+      - ./data/backend:/data     # logs.db (interaction logs, feedback)

@@ -6,6 +6,7 @@ import { AdminPanel } from "./components/AdminPanel";
 import { UploadsPanel } from "./components/UploadsPanel";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { FeedbackButton } from "./components/FeedbackButton";
+import { EmailAuth } from "./components/EmailAuth";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
@@ -35,6 +36,10 @@ interface User {
   byoeKey?: string | null;
   byoeModel?: string | null;
   apiKey?: string | null;
+  email?: string | null;
+  emailVerified?: number;
+  hasPassword?: boolean;
+  hasPasskey?: boolean;
   isAdmin: number;
 }
 
@@ -170,7 +175,8 @@ export function App() {
                   <Fingerprint className="w-5 h-5 text-indigo-200" />
                   <span>{authLoading ? "Initializing authenticator..." : "Sign in with Passkey"}</span>
                 </Button>
-                
+                <p className="text-center text-[10px] text-emerald-400/80 -mt-1">Recommended — phishing-resistant, nothing to leak</p>
+
                 <div className="text-center pt-2">
                   <button
                     type="button"
@@ -226,6 +232,9 @@ export function App() {
                 </div>
               </form>
             )}
+
+            {/* Email + password (alternative to passkeys) */}
+            <EmailAuth onAuthed={setUser} />
           </CardContent>
           <div className="px-6 py-4 bg-muted/30 border-t border-border/50 text-center text-[10px] text-muted-foreground/80 leading-relaxed flex items-center justify-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5 text-indigo-400" />

@@ -41,3 +41,26 @@ export async function verifyChallengeToken(token: string) {
     return null;
   }
 }
+
+// Signed, short-lived tokens for email verification ("verify") and password
+// reset ("reset"). Self-contained — no DB storage needed.
+export async function createEmailActionToken(
+  payload: { purpose: "verify" | "reset"; userId: string },
+  expiresIn: string,
+) {
+  return await new jose.SignJWT(payload)
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime(expiresIn)
+    .sign(SECRET);
+}
+
+export async function verifyEmailActionToken(token: string, purpose: "verify" | "reset") {
+  try {
+    const { payload } = await jose.jwtVerify(token, SECRET);
+    if (payload.purpose !== purpose) return null;
+    return payload as { purpose: string; userId: string };
+  } catch (e) {
+    return null;
+  }
+}

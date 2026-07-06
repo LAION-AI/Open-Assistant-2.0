@@ -22,6 +22,7 @@
     "jose": "^6.2.3",
     "katex": "^0.17.0",
     "lucide-react": "^1",
+    "nodemailer": "^9.0.1",
     "radix-ui": "^1.6.0",
     "react": "^19",
     "react-dom": "^19",
@@ -35,6 +36,7 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/nodemailer": "^8.0.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.31.10",

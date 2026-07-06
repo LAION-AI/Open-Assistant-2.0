@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Markdown } from "./Markdown";
 import { PlatformBadge } from "./PlatformBadge";
+import { ConversationThread } from "./ConversationThread";
 import {
   splitThinking,
   getLastUserMessage,
@@ -538,10 +539,6 @@ export function AdminPanel() {
                     requestModel = parsedPrompt.model || "";
                   }
 
-                  // Reconstruct the full thread, backfilling each turn's reasoning
-                  // from its own logged response.
-                  const { systemMsgs, turns } = buildConversationTurns(conv);
-
                   return (
                     <div key={conv.id} className="transition-colors">
                       {/* Summary Row */}
@@ -627,87 +624,7 @@ export function AdminPanel() {
                               )}
                             </div>
 
-                            <div className="rounded-xl border border-border/40 bg-background/30 p-4 space-y-3 overflow-hidden">
-                              {/* System prompts */}
-                              {systemMsgs.map((msg: any, sIdx: number) => (
-                                <div key={`sys-${sIdx}`} className="w-full">
-                                  <div className="flex items-center gap-1.5 mb-1 px-1">
-                                    <span className="text-[9px] font-bold uppercase tracking-widest text-amber-400/70">
-                                      System
-                                    </span>
-                                  </div>
-                                  <div className="w-full px-3 py-2 bg-amber-500/5 border border-amber-500/15 rounded-lg text-muted-foreground/80 text-[11px] leading-relaxed">
-                                    {renderMessageContent(msg.content)}
-                                  </div>
-                                </div>
-                              ))}
-
-                              {/* Paired user / assistant turns */}
-                              {turns.map((turn: Turn, tIdx: number) => {
-                                const a = turn.assistant;
-                                const split = a
-                                  ? splitThinking(a.content, a.reasoning_content)
-                                  : { thinking: "", text: "" };
-                                const isString = typeof a?.content === "string";
-
-                                return (
-                                  <div
-                                    key={tIdx}
-                                    className={`space-y-2 ${turn.isFinal ? "pt-2 border-t border-border/20" : ""}`}
-                                  >
-                                    {/* User bubble */}
-                                    {turn.user && (
-                                      <div className="flex flex-col items-end">
-                                        <div className="flex items-center gap-1.5 mb-1 px-1">
-                                          <span className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/60">
-                                            Turn {turn.userTurn}
-                                          </span>
-                                        </div>
-                                        <div className="max-w-[85%] px-3.5 py-2.5 rounded-2xl rounded-br-md bg-indigo-600/20 border border-indigo-500/25 text-foreground/90 text-[11.5px] leading-relaxed">
-                                          {renderMessageContent(turn.user.content)}
-                                        </div>
-                                      </div>
-                                    )}
-
-                                    {/* Assistant bubble */}
-                                    {a && (
-                                      <div className="flex flex-col items-start">
-                                        <div className="flex items-center gap-1.5 mb-1.5 px-1">
-                                          <span className={`text-[9px] font-bold uppercase tracking-widest ${turn.isFinal ? "text-emerald-400" : "text-muted-foreground/60"}`}>
-                                            {turn.isFinal ? "Final Response" : "Assistant"}
-                                          </span>
-                                          {turn.isFinal && (
-                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25">
-                                              ✓ Completed
-                                            </span>
-                                          )}
-                                        </div>
-
-                                        {/* Reasoning / thinking accordion */}
-                                        {renderThinking(`${conv.id}:${tIdx}`, split.thinking)}
-
-                                        {/* Visible answer */}
-                                        {(split.text || !split.thinking) && (
-                                          <div
-                                            className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl rounded-bl-md text-[11.5px] leading-relaxed ${
-                                              turn.isFinal
-                                                ? "bg-emerald-500/8 border border-emerald-500/20 text-foreground/90"
-                                                : "bg-muted/40 border border-border/40 text-foreground/80"
-                                            }`}
-                                          >
-                                            {isString ? (
-                                              <Markdown compact>{split.text}</Markdown>
-                                            ) : (
-                                              renderMessageContent(a.content)
-                                            )}
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
+                            <ConversationThread conv={conv} />
                           </div>
 
                           {/* Raw JSON Toggle */}
