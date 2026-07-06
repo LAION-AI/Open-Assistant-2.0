@@ -1,4 +1,7 @@
 import json
+import asyncio
+import hashlib
+import collections
 import httpx
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse, HTMLResponse
@@ -27,6 +30,27 @@ stats = {
     "redacting": 0,   # count of in-flight redactions
 }
 
+# LRU cache of previously redacted conversation histories (avoids re-redacting multi-turn threads)
+_REDACTED_CACHE_MAX = 100
+_redacted_cache: collections.OrderedDict = collections.OrderedDict()
+
+def _conversation_fingerprint(messages: list) -> str:
+    """Stable fingerprint of a message list based on role + content."""
+    key = [{"role": m.get("role", ""), "content": m.get("content") or ""} for m in messages]
+    return hashlib.sha256(json.dumps(key, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+
+def _cache_get(fp: str):
+    if fp in _redacted_cache:
+        _redacted_cache.move_to_end(fp)
+        return _redacted_cache[fp]
+    return None
+
+def _cache_set(fp: str, value: list) -> None:
+    _redacted_cache[fp] = value
+    _redacted_cache.move_to_end(fp)
+    if len(_redacted_cache) > _REDACTED_CACHE_MAX:
+        _redacted_cache.popitem(last=False)
+
 @app.on_event("startup")
 def startup_event():
     global classifier
@@ -50,14 +74,16 @@ async def status_page():
         ("Upstream Default Model", cfg.get("upstream_model", "")),
         ("Upstream API Key", "***" if cfg.get("upstream_key") else "(not set)"),
         ("Local Proxy Port", str(cfg.get("port", 2048))),
+        ("Local Proxy Host", cfg.get("host", "127.0.0.1")),
     ]
     rows_html = "".join(
         f"<tr><td>{label}</td><td><code>{value}</code></td></tr>"
         for label, value in rows
     )
     port = cfg.get("port", 2048)
+    host = cfg.get("host", "127.0.0.1")
     upstream_model = cfg.get("upstream_model", "")
-    base_url = f"http://localhost:{port}/v1"
+    base_url = f"http://{host}:{port}/v1"
 
     redacting = stats["redacting"] > 0
     redacting_badge = (
@@ -261,55 +287,74 @@ async def upload_interaction(prompt_messages: list, assistant_response: str, mod
         except Exception as e:
             print(f"Warning: Could not load PII redactor. Interaction was NOT uploaded: {e}")
             return
-            
-    # Reconstruct the conversation history
-    history = []
-    for m in prompt_messages:
-        history.append({
+
+    if not prompt_messages:
+        return
+
+    def _to_history_msg(m: dict) -> dict:
+        return {
             "role": m.get("role", "user"),
             "content": m.get("content") or "",
-            "reasoning_content": m.get("reasoning_content") or m.get("reasoning") or ""
-        })
+            "reasoning_content": m.get("reasoning_content") or m.get("reasoning") or "",
+        }
+
+    # For multi-turn conversations the client sends the full message history each request.
+    # We cache the redacted history keyed by a fingerprint of prior turns, so we only
+    # need to redact the newest user+assistant pair each time.
+    prev_raw = prompt_messages[:-1]  # All turns already seen in previous requests
+    new_history = [_to_history_msg(prompt_messages[-1])]  # The new user message
     if assistant_response:
-        history.append({
-            "role": "assistant",
-            "content": assistant_response,
-        })
-        
-    # Redact PII on-device
+        new_history.append({"role": "assistant", "content": assistant_response})
+
+    cached_redacted = None
+    if prev_raw:
+        cached_redacted = _cache_get(_conversation_fingerprint(prev_raw))
+
     stats["redacting"] += 1
     try:
-        redacted_messages = redact_messages(history, classifier)
+        if cached_redacted is not None:
+            # Only redact the new messages; prepend already-redacted history
+            new_redacted = redact_messages(new_history, classifier)
+            redacted_messages = list(cached_redacted) + new_redacted
+        else:
+            # New or uncached conversation — redact the full history
+            full_history = [_to_history_msg(m) for m in prompt_messages]
+            if assistant_response:
+                full_history.append({"role": "assistant", "content": assistant_response})
+            redacted_messages = redact_messages(full_history, classifier)
     except Exception as e:
         print(f"PII Redaction failed: {e}")
-        stats["redacting"] -= 1
         return
     finally:
         stats["redacting"] = max(0, stats["redacting"] - 1)
-        
+
+    # Cache the full redacted conversation so the next turn can reuse it
+    cache_key_msgs = list(prompt_messages) + ([{"role": "assistant", "content": assistant_response}] if assistant_response else [])
+    _cache_set(_conversation_fingerprint(cache_key_msgs), redacted_messages)
+
     api_key = config.get("api_key")
     if not api_key:
         print("Warning: No Open Assistant API Key configured. Redacted trace was NOT uploaded.")
         return
-        
+
     server_url = config.get("server_url", "https://oa.laion.ai/").rstrip("/")
     upload_url = f"{server_url}/api/traces/upload"
-    
+
     payload = {
         "traces": [
             {
                 "model": model,
                 "platform": "pip-library",
-                "messages": redacted_messages
+                "messages": redacted_messages,
             }
         ]
     }
-    
+
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
+        "Authorization": f"Bearer {api_key}",
     }
-    
+
     try:
         async with httpx.AsyncClient() as client:
             res = await client.post(upload_url, json=payload, headers=headers, timeout=15.0)
@@ -382,8 +427,8 @@ async def proxy_completions(request: Request):
                 return
             finally:
                 await client.aclose()
-            # Upload trace asynchronously after streaming finishes
-            await upload_interaction(messages, assistant_response, model_requested)
+            # Fire-and-forget: upload after stream completes without holding the connection open
+            asyncio.create_task(upload_interaction(messages, assistant_response, model_requested))
             
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
     else:
@@ -395,7 +440,7 @@ async def proxy_completions(request: Request):
                 
                 res_data = response.json()
                 assistant_response = res_data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                await upload_interaction(messages, assistant_response, model_requested)
+                asyncio.create_task(upload_interaction(messages, assistant_response, model_requested))
                 return res_data
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))

@@ -34,6 +34,10 @@ def run_config() -> None:
     if upstream_model:
         config["upstream_model"] = upstream_model
         
+    host_str = input(f"Local Proxy Host [{config['host']}]: ").strip()
+    if host_str:
+        config["host"] = host_str
+        
     port_str = input(f"Local Proxy Port [{config['port']}]: ").strip()
     if port_str:
         try:
@@ -72,11 +76,12 @@ def run_start() -> None:
             sys.exit(1)
             
     port = config.get("port", 8000)
-    print(f"Starting Open Assistant completions proxy server on http://localhost:{port}...")
+    host = config.get("host", "127.0.0.1")
+    print(f"Starting Open Assistant completions proxy server on http://{host}:{port}...")
     
     # Import uvicorn inside here to ensure it's not loaded on simple config queries
     from open_assistant_proxy.server import app
-    uvicorn.run(app, host="127.0.0.1", port=port)
+    uvicorn.run(app, host=host, port=port)
 
 def main() -> None:
     parser = argparse.ArgumentParser(
