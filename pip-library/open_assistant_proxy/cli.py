@@ -75,7 +75,7 @@ def run_start() -> None:
             print("Setup failed. Cannot start proxy server.", file=sys.stderr)
             sys.exit(1)
             
-    port = config.get("port", 8000)
+    port = config.get("port", 2048)
     host = config.get("host", "127.0.0.1")
     print(f"Starting Open Assistant completions proxy server on http://{host}:{port}...")
     

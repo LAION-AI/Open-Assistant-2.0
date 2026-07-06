@@ -44,5 +44,9 @@ services:
     environment:
       PORT: "8080"
       DB_PATH: /data/logs.db
+      CRED_DB_PATH: /creds/user.db   # read-only credential lookup for /api/ingest
     volumes:
-      - ./data/backend:/data     # logs.db (interaction logs, feedback)
+      - ./data/backend:/data         # logs.db (interaction logs, feedback)
+      # Read-only view of the frontend-owned user.db so the backend can verify
+      # API keys at /api/ingest. The frontend stays the single writer.
+      - ./data/frontend:/creds:ro

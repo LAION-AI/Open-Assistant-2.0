@@ -2,9 +2,21 @@
 	email {$ACME_EMAIL}
 }
 
-# Automatic HTTPS (Let's Encrypt) for your domain, reverse-proxied to the
-# frontend. The frontend talks to the backend internally over the compose
-# network, so the Go backend is never exposed publicly.
+# Automatic HTTPS (Let's Encrypt) for your domain. The frontend is the public
+# edge; the backend is internal, except for the single authenticated ingestion
+# path routed below (same cert, same domain — no second TLS surface).
 {$DOMAIN} {
-	reverse_proxy frontend:3000
+	# Programmatic trace ingestion goes straight to the Go backend, which
+	# authenticates the API key itself. Scoped to exactly this path and
+	# rewritten to /api/ingest, so the backend's other userId-trusting routes
+	# stay internal and unreachable from the internet.
+	handle /proxy/api/ingest {
+		rewrite * /api/ingest
+		reverse_proxy backend:8080
+	}
+
+	# Everything else → frontend (web UI + session-authenticated APIs).
+	handle {
+		reverse_proxy frontend:3000
+	}
 }

@@ -1,6 +1,7 @@
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
+import { createHash } from "node:crypto";
 
 export function runMigrations() {
   console.log("Running migrations...");
@@ -21,6 +22,25 @@ export function runMigrations() {
   try {
     sqlite.run("ALTER TABLE users ADD COLUMN show_in_leaderboard INTEGER DEFAULT 1 NOT NULL");
   } catch {}
+
+  // Migrate any legacy plaintext API keys to SHA-256 hashes in place, so
+  // existing keys keep working after the switch to hashed storage. Legacy keys
+  // start with "oa-"; already-hashed values are 64-char hex, so this is
+  // idempotent and safe to run repeatedly.
+  try {
+    const rows = sqlite
+      .query("SELECT id, api_key FROM users WHERE api_key IS NOT NULL AND api_key LIKE 'oa-%'")
+      .all() as { id: string; api_key: string }[];
+    const update = sqlite.query("UPDATE users SET api_key = ? WHERE id = ?");
+    for (const row of rows) {
+      const hash = createHash("sha256").update(row.api_key.trim()).digest("hex");
+      update.run(hash, row.id);
+    }
+    if (rows.length) console.log(`Hashed ${rows.length} legacy API key(s).`);
+  } catch (e) {
+    console.error("API key hashing migration failed:", e);
+  }
+
   console.log("Migrations complete.");
 }
 

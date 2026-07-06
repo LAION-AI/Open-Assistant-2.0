@@ -5,6 +5,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import dns from "dns/promises";
 import net from "net";
+import { createHash } from "node:crypto";
 import {
   generateRegistrationOptions,
   verifyRegistrationResponse,
@@ -210,7 +211,22 @@ function buildStoredPayload(model: string, messages: any[]): { prompt: string; r
   }
   const apiHistory = history.map((m: any) => {
     if (m.role === "assistant") {
-      return { role: "assistant", content: m.content || "", ...(m.reasoning ? { reasoning_content: m.reasoning } : {}) };
+      return {
+        role: "assistant",
+        content: m.content || "",
+        ...(m.reasoning ? { reasoning_content: m.reasoning } : {}),
+        ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+      };
+    }
+    // Tool results (from agent tool use) carry their linkage so the stored
+    // transcript stays coherent across multi-step tool conversations.
+    if (m.role === "tool") {
+      return {
+        role: "tool",
+        content: m.content || "",
+        ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+        ...(m.name ? { name: m.name } : {}),
+      };
     }
     if (m.image) {
       return {
@@ -536,12 +552,28 @@ async function feedbackAuthorized(req: Request): Promise<boolean> {
   return false;
 }
 
+// API keys are high-entropy random tokens, so a single SHA-256 is the standard,
+// safe way to store them (unlike low-entropy passwords, which need bcrypt/
+// argon2). Only the hash is ever persisted; the plaintext is shown to the user
+// exactly once, at creation. The Go ingestion backend hashes identically.
+function hashApiKey(raw: string): string {
+  return createHash("sha256").update(raw.trim()).digest("hex");
+}
+
+// Never send secret credentials (password hash, API-key hash) to the browser —
+// expose booleans instead. Use wherever a full user record is returned to a client.
+function clientUser(user: any, extra: Record<string, unknown> = {}) {
+  if (!user) return user;
+  const { passwordHash, apiKey, ...safe } = user;
+  return { ...safe, hasPassword: !!passwordHash, hasApiKey: !!apiKey, ...extra };
+}
+
 // Resolve a user from an `Authorization: Bearer <api key>` header.
 async function userFromApiKey(req: Request): Promise<any | null> {
   const auth = req.headers.get("Authorization") || "";
   const key = auth.replace(/^Bearer\s+/i, "").trim();
   if (!key) return null;
-  return dbAdapter.getUserByApiKey(key);
+  return dbAdapter.getUserByApiKey(hashApiKey(key));
 }
 
 const server = serve({
@@ -577,9 +609,8 @@ const server = serve({
         return Response.json({ error: "User not found" }, { status: 404 });
       }
 
-      const { passwordHash, ...safe } = user as any;
       const creds = await dbAdapter.getUserCredentials(user.id);
-      return Response.json({ user: { ...safe, hasPassword: !!passwordHash, hasPasskey: creds.length > 0 } });
+      return Response.json({ user: clientUser(user, { hasPasskey: creds.length > 0 }) });
     },
 
     // --- Email + password auth (passkeys remain the recommended default) ---
@@ -1176,7 +1207,7 @@ const server = serve({
         await dbAdapter.updateBYOE(payload.userId, byoeUrl || null, byoeKey || null, byoeModel || null);
 
         const updatedUser = await dbAdapter.getUser(payload.userId);
-        return Response.json({ success: true, user: updatedUser });
+        return Response.json({ success: true, user: clientUser(updatedUser) });
       } catch (err: any) {
         console.error("Error updating BYOE settings:", err);
         return Response.json({ error: err.message }, { status: 500 });
@@ -1202,7 +1233,7 @@ const server = serve({
         const { show } = await req.json();
         await dbAdapter.updateShowInLeaderboard(payload.userId, !!show);
         const updatedUser = await dbAdapter.getUser(payload.userId);
-        return Response.json({ success: true, user: updatedUser });
+        return Response.json({ success: true, user: clientUser(updatedUser) });
       } catch (err: any) {
         console.error("Error updating leaderboard preference:", err);
         return Response.json({ error: err.message }, { status: 500 });
@@ -1392,10 +1423,11 @@ const server = serve({
           await dbAdapter.setApiKey(payload.userId, null);
           return Response.json({ apiKey: null });
         }
-        // Generate a fresh opaque key.
+        // Generate a fresh opaque key. Only its hash is stored; the plaintext is
+        // returned here once and can never be retrieved again.
         const bytes = crypto.getRandomValues(new Uint8Array(24));
         const apiKey = "oa-" + Buffer.from(bytes).toString("base64url");
-        await dbAdapter.setApiKey(payload.userId, apiKey);
+        await dbAdapter.setApiKey(payload.userId, hashApiKey(apiKey));
         return Response.json({ apiKey });
       } catch (err: any) {
         console.error("Error updating API key:", err);
@@ -1476,15 +1508,22 @@ const server = serve({
           // that marker as-is so it gets its own filter tab in the UI.
           const detected = (tr.platform || "trace").toString();
           const platform = (
-            detected === "pip-library" || detected.startsWith("trace") ? detected : `trace:${detected}`
+            detected === "pip-library" || detected.startsWith("pip-library") || detected.startsWith("trace")
+              ? detected
+              : `trace:${detected}`
           ).slice(0, 40);
+
+          // A stable conversation id (e.g. from the pip proxy) lets the backend
+          // upsert multi-turn sessions into one row instead of one per turn.
+          // Fall back to a fresh id for one-shot uploads without an id.
+          const conversationId = tr.conversation_id ? String(tr.conversation_id).slice(0, 128) : crypto.randomUUID();
 
           const res = await fetch(`${BACKEND_URL}/api/log-interaction`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               userId: user.id,
-              conversationId: crypto.randomUUID(),
+              conversationId,
               platform,
               prompt,
               response,

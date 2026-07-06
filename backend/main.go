@@ -33,11 +33,29 @@ func main() {
 
 	proxyHandler := proxy.NewProxyHandler(repo)
 
+	// Read-only view of the frontend-owned user.db, for authenticating
+	// programmatic trace uploads at /api/ingest without a frontend round-trip.
+	credPath := os.Getenv("CRED_DB_PATH")
+	if credPath == "" {
+		credPath = "/creds/user.db"
+	}
+	creds, err := openCredStore(credPath)
+	if err != nil {
+		log.Printf("Warning: credential store unavailable (%v); /api/ingest will reject uploads", err)
+		creds = nil
+	} else {
+		defer creds.db.Close()
+	}
+
 	mux := http.NewServeMux()
 
 	// Chat completions endpoint
 	mux.Handle("/v1/chat/completions", proxyHandler)
 	mux.Handle("/v1beta/chat/completions", proxyHandler)
+
+	// Authenticated programmatic trace ingestion (publicly routed via a scoped
+	// Caddy path; verifies API keys itself against the read-only credential store).
+	mux.HandleFunc("/api/ingest", makeIngestHandler(repo, creds))
 
 	// Health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -320,13 +338,17 @@ func main() {
 			CreatedAt:      time.Now().Unix(),
 		}
 
-		if err := repo.SaveLog(r.Context(), entry); err != nil {
+		// Upsert on (user_id, conversation_id) so multi-turn sessions that resend
+		// their whole (growing) history each turn overwrite one row instead of
+		// piling up a duplicate per turn. Falls back to insert when no
+		// conversation id is supplied.
+		if err := repo.UpsertLog(r.Context(), entry); err != nil {
 			log.Printf("Error saving direct interaction log: %v", err)
 			http.Error(w, fmt.Sprintf("Database error: %v", err), http.StatusInternalServerError)
 			return
 		}
 
-		log.Printf("Direct interaction logged: user=%s, tokens=%d", payload.UserID, payload.Tokens)
+		log.Printf("Direct interaction logged: user=%s, conv=%s, tokens=%d", payload.UserID, payload.ConversationID, payload.Tokens)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"success":true}`))
 	})

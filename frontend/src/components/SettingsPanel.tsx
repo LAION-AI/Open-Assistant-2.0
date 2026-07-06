@@ -14,7 +14,7 @@ interface User {
   byoeUrl?: string | null;
   byoeKey?: string | null;
   byoeModel?: string | null;
-  apiKey?: string | null;
+  hasApiKey?: boolean;
   emailVerified?: number;
   hasPassword?: boolean;
   hasPasskey?: boolean;
@@ -40,8 +40,10 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Data-collection proxy API key
-  const [apiKey, setApiKey] = useState<string | null>(user.apiKey || null);
+  // Data-collection proxy API key. Only the hash is stored server-side, so the
+  // plaintext is only ever held here transiently right after (re)generation;
+  // `user.hasApiKey` tells us whether a key exists at all across reloads.
+  const [apiKey, setApiKey] = useState<string | null>(null);
   const [keyLoading, setKeyLoading] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const proxyBase = typeof window !== "undefined" ? `${window.location.origin}/v1` : "/v1";
@@ -68,7 +70,7 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
     });
     const d = await r.json();
     setApiKey(d.apiKey);
-    onUpdateUser({ ...user, apiKey: d.apiKey });
+    onUpdateUser({ ...user, hasApiKey: !!d.apiKey });
     return d.apiKey;
   };
 
@@ -136,7 +138,7 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to update API key");
       setApiKey(data.apiKey);
-      onUpdateUser({ ...user, apiKey: data.apiKey });
+      onUpdateUser({ ...user, hasApiKey: !!data.apiKey });
     } catch (err: any) {
       setError(err.message || "Failed to update API key");
     } finally {
@@ -486,23 +488,34 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
             <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               API Key
             </Label>
-            {apiKey ? (
+            {(apiKey || user.hasApiKey) ? (
               <>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 h-11 flex items-center px-3 rounded-xl bg-background/50 border border-input text-sm font-mono text-foreground/90 truncate">
-                    {apiKey}
-                  </code>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    onClick={() => copyToClipboard("key", apiKey)}
-                    className="h-11 w-11 flex-shrink-0 rounded-xl"
-                    title="Copy API key"
-                  >
-                    {copiedField === "key" ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  </Button>
-                </div>
+                {apiKey ? (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 h-11 flex items-center px-3 rounded-xl bg-background/50 border border-input text-sm font-mono text-foreground/90 truncate">
+                        {apiKey}
+                      </code>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => copyToClipboard("key", apiKey)}
+                        className="h-11 w-11 flex-shrink-0 rounded-xl"
+                        title="Copy API key"
+                      >
+                        {copiedField === "key" ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                      </Button>
+                    </div>
+                    <p className="text-[10px] text-amber-400/90 leading-relaxed px-1">
+                      Copy it now — for your security this key is only shown once and can't be retrieved later.
+                    </p>
+                  </>
+                ) : (
+                  <div className="text-[11px] text-muted-foreground/90 leading-relaxed px-1 py-2 rounded-xl bg-background/40 border border-input">
+                    An API key is set but hidden for security. Regenerate to issue a new one — the previous key stops working immediately.
+                  </div>
+                )}
                 <div className="flex gap-3 pt-1">
                   <Button
                     type="button"

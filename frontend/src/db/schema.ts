@@ -8,7 +8,7 @@ export const users = sqliteTable("users", {
   byoeUrl: text("byoe_url"),
   byoeKey: text("byoe_key"),
   byoeModel: text("byoe_model"),
-  apiKey: text("api_key"), // personal key for routing external tools through our logging proxy
+  apiKey: text("api_key"), // SHA-256 hash of the user's proxy key (never plaintext); shown once at creation
   passwordHash: text("password_hash"), // for email+password login (null = passkey-only)
   emailVerified: integer("email_verified").default(0).notNull(),
   showInLeaderboard: integer("show_in_leaderboard").default(1).notNull(),

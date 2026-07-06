@@ -37,7 +37,7 @@ interface User {
   byoeUrl?: string | null;
   byoeKey?: string | null;
   byoeModel?: string | null;
-  apiKey?: string | null;
+  hasApiKey?: boolean;
   emailVerified?: number;
   hasPassword?: boolean;
   hasPasskey?: boolean;

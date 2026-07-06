@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "open-assistant-proxy"
-version = "0.1.0"
+version = "0.2.0"
 description = "On-device PII redaction and OpenAI-compatible local completion proxy for Open Assistant 2.0"
 readme = "README.md"
 requires-python = ">=3.9"
