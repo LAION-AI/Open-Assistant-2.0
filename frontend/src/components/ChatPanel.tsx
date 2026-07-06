@@ -118,17 +118,29 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
 
   useEffect(() => {
     fetchHistory();
+  }, []);
+
+  useEffect(() => {
     // Load the model list for the on-the-fly model picker.
     fetch("/api/models")
       .then(r => (r.ok ? r.json() : null))
       .then(d => {
         if (d?.models?.length) {
           setModels(d.models);
-          setModel(prev => prev || d.default || d.models[0] || "");
+          setModel(prev => {
+            if (prev && d.models.includes(prev)) return prev;
+            return d.default || d.models[0] || "";
+          });
+        } else {
+          setModels([]);
+          setModel("");
         }
       })
-      .catch(() => {});
-  }, []);
+      .catch(() => {
+        setModels([]);
+        setModel("");
+      });
+  }, [user.byoeUrl, user.byoeKey]);
 
   const newChat = () => {
     setMessages([]);

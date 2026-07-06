@@ -172,17 +172,7 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			overrideModel = byoeModel
 		}
 
-		// If it's a Google Google APIs endpoint, append the key as a query param
-		if strings.Contains(upstreamUrl, "googleapis.com") && byoeKey != "" {
-			if strings.Contains(upstreamUrl, "?") {
-				upstreamUrl = upstreamUrl + "&key=" + byoeKey
-			} else {
-				upstreamUrl = upstreamUrl + "?key=" + byoeKey
-			}
-			apiKey = ""
-		} else {
-			apiKey = byoeKey
-		}
+		apiKey = byoeKey
 	}
 
 	// The body sent upstream strips reasoning_content (kept only in our logs so

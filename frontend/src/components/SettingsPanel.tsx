@@ -159,9 +159,9 @@ export function SettingsPanel({ user, onUpdateUser }: SettingsPanelProps) {
         const list = data.data.map((m: any) => m.id);
         setModels(list);
         
-        // If the current model is not in the list, set it to empty or the first model
+        // If the current model is not in the list, default to the first model
         if (list.length > 0 && !list.includes(byoeModel)) {
-          // Keep it as is or default to first
+          setByoeModel(list[0]);
         }
       } else {
         setModels([]);
