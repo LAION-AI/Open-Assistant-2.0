@@ -12,7 +12,7 @@ DEFAULT_CONFIG = {
     "upstream_url": "https://api.openai.com/v1",
     "upstream_key": "",
     "upstream_model": "gpt-4o",
-    "port": 1010
+    "port": 2048
 }
 
 def load_config() -> Dict[str, Any]:

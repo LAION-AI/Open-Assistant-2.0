@@ -43,6 +43,7 @@ def run_config() -> None:
             
     save_config(config)
     print("\nConfiguration saved successfully!")
+    print("Now run `oa-proxy start` to start the proxy server.")
 
 def run_setup() -> None:
     try:
