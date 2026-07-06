@@ -25,3 +25,4 @@ logs.db
 logs.db-shm
 logs.db-wal
 backend/oa-backend
+copy.sh

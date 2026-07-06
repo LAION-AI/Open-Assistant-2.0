@@ -96,6 +96,14 @@ async function resolveLocalHostIfNecessary(urlStr: string): Promise<string> {
       return urlStr;
     }
 
+    // Only resolve single-label local hosts (like "pizero") or mDNS hosts (ending in ".local").
+    // Do NOT resolve public internet domains (like "api.openai.com" or "googleapis.com")
+    // because replacing the hostname with its IP address will cause TLS certificate validation failures.
+    const isLocal = !hostname.includes(".") || hostname.endsWith(".local");
+    if (!isLocal) {
+      return urlStr;
+    }
+
     console.log(`Resolving local hostname: ${hostname}`);
     const lookupResult = await dns.lookup(hostname, { all: true }).catch(err => {
       console.warn(`DNS lookup failed for ${hostname}:`, err.message);
@@ -146,9 +154,18 @@ runMigrations();
 async function resolveModelList(byoeUrl: string, byoeKey?: string | null): Promise<string[]> {
   const cleaned = byoeUrl.trim().replace(/\/$/, "");
   const resolved = await resolveLocalHostIfNecessary(cleaned);
-  const modelsUrl = resolved.endsWith("/models") ? resolved : `${resolved}/models`;
+  let modelsUrl = resolved.endsWith("/models") ? resolved : `${resolved}/models`;
+  const isGoogle = modelsUrl.includes("googleapis.com");
   const headers: Record<string, string> = {};
-  if (byoeKey && byoeKey.trim()) headers["Authorization"] = `Bearer ${byoeKey.trim()}`;
+
+  if (byoeKey && byoeKey.trim()) {
+    if (isGoogle) {
+      const separator = modelsUrl.includes("?") ? "&" : "?";
+      modelsUrl = `${modelsUrl}${separator}key=${byoeKey.trim()}`;
+    } else {
+      headers["Authorization"] = `Bearer ${byoeKey.trim()}`;
+    }
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30000);
@@ -156,7 +173,26 @@ async function resolveModelList(byoeUrl: string, byoeKey?: string | null): Promi
     const res = await fetch(modelsUrl, { headers, signal: controller.signal });
     if (!res.ok) throw new Error(`Failed to fetch models: ${res.statusText}`);
     const data = await res.json();
-    return Array.isArray(data?.data) ? data.data.map((m: any) => m.id).filter(Boolean) : [];
+
+    // Parse Google response format
+    if (isGoogle && Array.isArray(data?.models)) {
+      return data.models.map((m: any) => {
+        const name = m.name || "";
+        return name.replace(/^models\//, "");
+      }).filter(Boolean);
+    }
+
+    // Fallback: Parse OpenAI standard response format
+    if (Array.isArray(data?.data)) {
+      return data.data.map((m: any) => m.id).filter(Boolean);
+    }
+    if (Array.isArray(data?.models)) {
+      return data.models.map((m: any) => {
+        const val = m.id || m.name || "";
+        return val.replace(/^models\//, "");
+      }).filter(Boolean);
+    }
+    return [];
   } finally {
     clearTimeout(timeout);
   }
@@ -388,15 +424,17 @@ async function proxyChatCompletion(
   reqBody: any,
   conversationId: string | null,
   platform: string,
+  useV1Beta: boolean = false,
 ): Promise<Response> {
   const isBYOE = !!user.byoeUrl;
   if (!isBYOE && user.credits <= 0) {
     return Response.json({ error: "Out of credits! Please configure BYOE in settings." }, { status: 402 });
   }
 
-  // Model selection on the fly: explicit request model, else the saved default.
+  // Model selection on the fly: explicit request model (model or model_id), else the saved default.
+  const reqModel = reqBody?.model || reqBody?.model_id;
   const model =
-    (typeof reqBody?.model === "string" && reqBody.model.trim()) || user.byoeModel || "gpt-4o";
+    (typeof reqModel === "string" && reqModel.trim()) || user.byoeModel || "gpt-4o";
   reqBody.model = model;
 
   const headers: Record<string, string> = {
@@ -411,7 +449,8 @@ async function proxyChatCompletion(
     // No X-BYOE-Model: the resolved model now travels in the body and is logged.
   }
 
-  const response = await fetch(`${BACKEND_URL}/v1/chat/completions`, {
+  const endpointPath = useV1Beta ? "/v1beta/chat/completions" : "/v1/chat/completions";
+  const response = await fetch(`${BACKEND_URL}${endpointPath}`, {
     method: "POST",
     headers,
     body: JSON.stringify(reqBody),
@@ -1107,36 +1146,8 @@ const server = serve({
           return Response.json({ error: "API Base URL is required" }, { status: 400 });
         }
 
-        // Clean up URL and resolve local hostname to IP if needed
-        byoeUrl = byoeUrl.trim().replace(/\/$/, "");
-        const resolvedByoeUrl = await resolveLocalHostIfNecessary(byoeUrl);
-        const modelsUrl = resolvedByoeUrl.endsWith("/models") ? resolvedByoeUrl : `${resolvedByoeUrl}/models`;
-
-        const headers: Record<string, string> = {};
-        if (byoeKey && byoeKey.trim()) {
-          headers["Authorization"] = `Bearer ${byoeKey.trim()}`;
-        }
-
-        console.log(`Fetching models list from: ${modelsUrl} (original URL: ${byoeUrl})`);
-        
-        // Use a short timeout to prevent hanging on unreachable local addresses
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-        const response = await fetch(modelsUrl, {
-          method: "GET",
-          headers,
-          signal: controller.signal,
-        });
-
-        clearTimeout(timeoutId);
-
-        if (!response.ok) {
-          throw new Error(`Failed to fetch models from endpoint: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        return Response.json(data);
+        const list = await resolveModelList(byoeUrl, byoeKey);
+        return Response.json({ data: list.map(id => ({ id })) });
       } catch (err: any) {
         console.error("Error fetching remote models:", err);
         return Response.json({ error: err.message }, { status: 500 });
@@ -1564,17 +1575,18 @@ const server = serve({
         if (!payload) return Response.json({ error: "Invalid session" }, { status: 401 });
 
         const body = await req.json().catch(() => ({}));
-        const conversationId = (body?.conversationId || "").toString();
+        const conversationId = body?.conversationId ? body.conversationId.toString() : "";
+        const logId = typeof body?.logId === "number" ? body.logId : 0;
         const messages: any[] = Array.isArray(body?.messages) ? body.messages : [];
-        if (!conversationId || messages.length === 0) {
-          return Response.json({ error: "conversationId and messages required" }, { status: 400 });
+        if ((!conversationId && !logId) || messages.length === 0) {
+          return Response.json({ error: "conversationId or logId, and messages required" }, { status: 400 });
         }
 
         const { prompt, response, tokens } = buildStoredPayload(body?.model || "", messages);
         const res = await fetch(`${BACKEND_URL}/api/logs/update`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ userId: payload.userId, conversationId, prompt, response, tokens }),
+          body: JSON.stringify({ userId: payload.userId, conversationId, logId, prompt, response, tokens }),
         });
         if (!res.ok) {
           const errText = await res.text();
@@ -1679,6 +1691,46 @@ const server = serve({
         });
       } catch (err: any) {
         console.error("Error in /v1/models:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // v1beta completions route
+    "/v1beta/chat/completions": async req => {
+      if (req.method === "OPTIONS") {
+        return new Response(null, {
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+          },
+        });
+      }
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const user = await userFromApiKey(req);
+        if (!user) return Response.json({ error: "Invalid API key" }, { status: 401 });
+        const reqBody = await req.json();
+        const conversationId = req.headers.get("X-Conversation-Id");
+        return proxyChatCompletion(user, reqBody, conversationId, detectPlatform(req), true);
+      } catch (err: any) {
+        console.error("Error in /v1beta/chat/completions proxy:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // v1beta models route
+    "/v1beta/models": async req => {
+      try {
+        const user = await userFromApiKey(req);
+        if (!user) return Response.json({ error: "Invalid API key" }, { status: 401 });
+        const ids = user.byoeUrl ? await resolveModelList(user.byoeUrl, user.byoeKey) : ["gpt-4o"];
+        return Response.json({
+          object: "list",
+          data: ids.map(id => ({ id, object: "model", owned_by: "open-assistant" })),
+        });
+      } catch (err: any) {
+        console.error("Error in /v1beta/models:", err);
         return Response.json({ error: err.message }, { status: 500 });
       }
     },

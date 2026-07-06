@@ -114,12 +114,17 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 
+	isV1Beta := strings.Contains(r.URL.Path, "v1beta")
+
 	// Determine upstream URL and API Key
 	byoeUrl := r.Header.Get("X-BYOE-Url")
 	byoeKey := r.Header.Get("X-BYOE-Key")
 	byoeModel := r.Header.Get("X-BYOE-Model")
 
 	upstreamUrl := "https://api.openai.com/v1/chat/completions"
+	if isV1Beta {
+		upstreamUrl = "https://api.openai.com/v1beta/chat/completions"
+	}
 	apiKey := ""
 	overrideModel := ""
 
@@ -129,16 +134,55 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Clean up custom URL
 		byoeUrl = strings.TrimSuffix(byoeUrl, "/")
 		if !strings.HasSuffix(byoeUrl, "/chat/completions") {
-			if strings.HasSuffix(byoeUrl, "/v1") {
+			// Check if custom URL contains an API version prefix
+			hasV1Beta := strings.HasSuffix(byoeUrl, "/v1beta") || strings.Contains(byoeUrl, "/v1beta/")
+			hasV1 := strings.HasSuffix(byoeUrl, "/v1") || strings.Contains(byoeUrl, "/v1/")
+
+			if hasV1Beta {
+				upstreamUrl = byoeUrl + "/chat/completions"
+			} else if hasV1 {
 				upstreamUrl = byoeUrl + "/chat/completions"
 			} else {
-				upstreamUrl = byoeUrl + "/v1/chat/completions"
+				// Base URL has neither v1 nor v1beta suffix, so append version from incoming request path
+				version := "/v1"
+				if isV1Beta {
+					version = "/v1beta"
+				}
+				upstreamUrl = byoeUrl + version + "/chat/completions"
 			}
 		} else {
 			upstreamUrl = byoeUrl
 		}
-		apiKey = byoeKey
-		overrideModel = byoeModel
+
+		// Let the incoming request model parameter take precedence over the configured byoeModel (fallback)
+		reqModel := chatReq.Model
+		if reqModel == "" {
+			// Check if model_id is present in the raw request JSON
+			var rawMap map[string]interface{}
+			if err := json.Unmarshal(bodyBytes, &rawMap); err == nil {
+				if mid, ok := rawMap["model_id"].(string); ok && mid != "" {
+					reqModel = mid
+				}
+			}
+		}
+
+		if reqModel != "" {
+			overrideModel = reqModel
+		} else {
+			overrideModel = byoeModel
+		}
+
+		// If it's a Google Google APIs endpoint, append the key as a query param
+		if strings.Contains(upstreamUrl, "googleapis.com") && byoeKey != "" {
+			if strings.Contains(upstreamUrl, "?") {
+				upstreamUrl = upstreamUrl + "&key=" + byoeKey
+			} else {
+				upstreamUrl = upstreamUrl + "?key=" + byoeKey
+			}
+			apiKey = ""
+		} else {
+			apiKey = byoeKey
+		}
 	}
 
 	// The body sent upstream strips reasoning_content (kept only in our logs so

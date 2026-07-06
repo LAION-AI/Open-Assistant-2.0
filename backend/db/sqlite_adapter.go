@@ -212,7 +212,16 @@ func (r *SQLiteRepository) UpdateContent(ctx context.Context, userID, conversati
 	n, _ := res.RowsAffected()
 	return n, nil
 }
-
+func (r *SQLiteRepository) UpdateContentByID(ctx context.Context, userID string, id int64, prompt, response json.RawMessage, tokens int) (int64, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE interaction_logs SET prompt = ?, response = ?, tokens = ? WHERE user_id = ? AND id = ?`,
+		string(prompt), string(response), tokens, userID, id)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
 func (r *SQLiteRepository) SaveFeedback(ctx context.Context, entry *FeedbackEntry) error {
 	_, err := r.db.ExecContext(ctx,
 		`INSERT INTO feedback (user_id, message, category, status, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?)`,

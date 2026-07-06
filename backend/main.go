@@ -37,6 +37,7 @@ func main() {
 
 	// Chat completions endpoint
 	mux.Handle("/v1/chat/completions", proxyHandler)
+	mux.Handle("/v1beta/chat/completions", proxyHandler)
 
 	// Health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -246,17 +247,29 @@ func main() {
 		var payload struct {
 			UserID         string `json:"userId"`
 			ConversationID string `json:"conversationId"`
+			LogID          int64  `json:"logId"`
 			Prompt         string `json:"prompt"`
 			Response       string `json:"response"`
 			Tokens         int    `json:"tokens"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.UserID == "" || payload.ConversationID == "" {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.UserID == "" {
 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
 			return
 		}
 
-		n, err := repo.UpdateContent(r.Context(), payload.UserID, payload.ConversationID,
-			db.ToRawJSON([]byte(payload.Prompt)), db.ToRawJSON([]byte(payload.Response)), payload.Tokens)
+		var n int64
+		var err error
+		if payload.LogID > 0 {
+			n, err = repo.UpdateContentByID(r.Context(), payload.UserID, payload.LogID,
+				db.ToRawJSON([]byte(payload.Prompt)), db.ToRawJSON([]byte(payload.Response)), payload.Tokens)
+		} else if payload.ConversationID != "" {
+			n, err = repo.UpdateContent(r.Context(), payload.UserID, payload.ConversationID,
+				db.ToRawJSON([]byte(payload.Prompt)), db.ToRawJSON([]byte(payload.Response)), payload.Tokens)
+		} else {
+			http.Error(w, "conversationId or logId required", http.StatusBadRequest)
+			return
+		}
+
 		if err != nil {
 			log.Printf("Error updating log content: %v", err)
 			http.Error(w, fmt.Sprintf("Database error: %v", err), http.StatusInternalServerError)

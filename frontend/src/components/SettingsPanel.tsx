@@ -336,7 +336,7 @@ export function SettingsPanel({ user, onUpdateUser }: SettingsPanelProps) {
 
           <div className="space-y-2">
             <Label htmlFor="byoeModel" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Model ID
+              Default Model ID
             </Label>
             <div className="relative">
               <select
@@ -350,7 +350,7 @@ export function SettingsPanel({ user, onUpdateUser }: SettingsPanelProps) {
                   <option value="">(Enter API Base URL and click Fetch Models to populate)</option>
                 ) : (
                   <>
-                    <option value="">(Select a model)</option>
+                    <option value="">(Select default model)</option>
                     {models.map(m => (
                       <option key={m} value={m}>
                         {m}
@@ -361,7 +361,7 @@ export function SettingsPanel({ user, onUpdateUser }: SettingsPanelProps) {
               </select>
             </div>
             <p className="text-[10px] text-muted-foreground/80 leading-relaxed px-1">
-              The model selected from the remote endpoint's <code>v1/models</code> list.
+              The fallback model used when an incoming proxy request does not specify one.
             </p>
           </div>
 

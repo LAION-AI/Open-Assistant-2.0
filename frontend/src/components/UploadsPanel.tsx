@@ -9,10 +9,15 @@ import {
   truncateText,
   getLastUserMessage,
   platformCategory,
+  buildConversationTurns,
+  getMessages,
+  messageText,
+  parseJsonObject,
   type Conversation,
   type InteractionLog,
 } from "../lib/chat";
 import { PlatformBadge } from "./PlatformBadge";
+import { loadRedactor, redactMessages } from "../lib/redact";
 import {
   Database,
   MessageSquare,
@@ -26,6 +31,8 @@ import {
   AlertCircle,
   Loader2,
   Boxes,
+  ShieldCheck,
+  ShieldAlert,
 } from "lucide-react";
 
 type Filter = "all" | "chat" | "v1" | "trace";
@@ -54,6 +61,108 @@ export function UploadsPanel() {
       setError(err.message || "Failed to load uploads");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const [redacting, setRedacting] = useState<number | null>(null);
+  const [redactingAll, setRedactingAll] = useState(false);
+
+  const isRedacted = (conv: Conversation): boolean => {
+    const promptStr = typeof conv.latest.prompt === "string" ? conv.latest.prompt : JSON.stringify(conv.latest.prompt || "");
+    const responseStr = typeof conv.latest.response === "string" ? conv.latest.response : JSON.stringify(conv.latest.response || "");
+    return promptStr.includes("[REDACTED_") || responseStr.includes("[REDACTED_");
+  };
+
+  const redactOne = async (conv: Conversation, classifier: any) => {
+    const messages = getMessages(conv.latest.prompt) || [];
+    const responseParsed = parseJsonObject(conv.latest.response);
+
+    const history = messages.map((m: any) => ({
+      role: m.role || "user",
+      content: typeof m.content === "string" ? m.content : messageText(m.content),
+      reasoning: m.reasoning_content || m.reasoning || ""
+    }));
+
+    if (responseParsed) {
+      history.push({
+        role: "assistant",
+        content: responseParsed.content || "",
+        reasoning: responseParsed.reasoning_content || responseParsed.reasoning || ""
+      });
+    }
+
+    const { messages: redactedHistory } = await redactMessages(history, classifier);
+
+    if (conv.conversationId) {
+      const res = await fetch("/api/chat/redact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId: conv.conversationId,
+          messages: redactedHistory,
+          model: conv.model,
+        }),
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to save redacted conversation: ${res.statusText}`);
+      }
+    } else {
+      for (const log of conv.logs) {
+        if (!log) continue;
+        const logMsgs = getMessages(log.prompt) || [];
+        const logMsgCount = logMsgs.length;
+        const subHistory = redactedHistory.slice(0, logMsgCount + 1);
+
+        const res = await fetch("/api/chat/redact", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            logId: log.id,
+            messages: subHistory,
+            model: conv.model,
+          }),
+        });
+        if (!res.ok) {
+          throw new Error(`Failed to save redacted log row ${log.id}: ${res.statusText}`);
+        }
+      }
+    }
+  };
+
+  const redactConversation = async (conv: Conversation) => {
+    if (!confirm("Run on-device PII redact filter on this conversation?")) return;
+    setRedacting(conv.id);
+    try {
+      const classifier = await loadRedactor();
+      await redactOne(conv, classifier);
+      await fetchData();
+    } catch (err: any) {
+      setError(err.message || "Failed to redact");
+    } finally {
+      setRedacting(null);
+    }
+  };
+
+  const redactGroup = async (targets: Conversation[]) => {
+    const unredacted = targets.filter(c => !isRedacted(c));
+    if (unredacted.length === 0) return;
+    if (!confirm(`Run on-device PII redact filter on all ${unredacted.length} unredacted conversations in this view?`)) {
+      return;
+    }
+    setRedactingAll(true);
+    setError(null);
+    try {
+      const classifier = await loadRedactor();
+      for (const conv of unredacted) {
+        setRedacting(conv.id);
+        await redactOne(conv, classifier);
+      }
+      await fetchData();
+    } catch (err: any) {
+      setError(err.message || "Failed to redact group");
+    } finally {
+      setRedacting(null);
+      setRedactingAll(false);
     }
   };
 
@@ -160,14 +269,27 @@ export function UploadsPanel() {
               Everything you've contributed — web chats and external tool (V1 API) sessions. Review or delete any of it.
             </CardDescription>
           </div>
-          <button
-            onClick={fetchData}
-            disabled={loading}
-            className="p-2 rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground transition-all active:scale-95 disabled:opacity-50"
-            title="Refresh"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-          </button>
+          <div className="flex items-center gap-2">
+            {visible.some(c => !isRedacted(c)) && (
+              <button
+                onClick={() => redactGroup(visible)}
+                disabled={redactingAll || loading}
+                className="px-3 py-1.5 rounded-xl border border-indigo-500/20 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 text-xs font-semibold flex items-center gap-1.5 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
+                title="Redact all unredacted conversations in this group"
+              >
+                {redactingAll ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldAlert className="w-3.5 h-3.5" />}
+                <span>Redact Group ({visible.filter(c => !isRedacted(c)).length})</span>
+              </button>
+            )}
+            <button
+              onClick={fetchData}
+              disabled={loading}
+              className="p-2 rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground transition-all active:scale-95 disabled:opacity-50"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+            </button>
+          </div>
         </CardHeader>
 
         <div className="flex gap-1 border-b border-border/40 bg-muted/40 p-1">
@@ -220,6 +342,12 @@ export function UploadsPanel() {
                             <Brain className="w-3 h-3" />
                           </div>
                         )}
+                        {isRedacted(conv) && (
+                          <div className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0">
+                            <ShieldCheck className="w-3 h-3" />
+                            <span>Redacted</span>
+                          </div>
+                        )}
                         <div className="text-muted-foreground truncate flex-1 min-w-0 pr-2 font-medium">
                           {truncateText(conversationTitle(conv) || getLastUserMessage(conv.latest.prompt), 80)}
                         </div>
@@ -233,6 +361,24 @@ export function UploadsPanel() {
                           <Calendar className="w-3.5 h-3.5" />
                           <span>{formatTime(conv.updatedAt)}</span>
                         </div>
+                        <button
+                          onClick={e => { e.stopPropagation(); redactConversation(conv); }}
+                          disabled={redacting === conv.id || isRedacted(conv)}
+                          className={`p-1.5 rounded-lg transition-colors ${
+                            isRedacted(conv)
+                              ? "text-emerald-500 hover:bg-emerald-500/10 cursor-default"
+                              : "hover:bg-indigo-500/10 hover:text-indigo-400 text-muted-foreground/60"
+                          }`}
+                          title={isRedacted(conv) ? "Protected (PII Redacted)" : "Redact PII on-device"}
+                        >
+                          {redacting === conv.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : isRedacted(conv) ? (
+                            <ShieldCheck className="w-4 h-4" />
+                          ) : (
+                            <ShieldAlert className="w-4 h-4" />
+                          )}
+                        </button>
                         <button
                           onClick={e => { e.stopPropagation(); deleteConversation(conv); }}
                           disabled={deleting === conv.id}
