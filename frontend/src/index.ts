@@ -1228,10 +1228,14 @@ const server = serve({
             totalTraces: e.totalTraces,
           }));
 
-        return Response.json({ leaderboard });
+        const globalTokens = statsEntries.reduce((acc, e) => acc + e.totalTokens, 0);
+        const globalTraces = statsEntries.reduce((acc, e) => acc + e.totalTraces, 0);
+        const globalContributors = statsEntries.length;
+
+        return Response.json({ leaderboard, globalTokens, globalTraces, globalContributors });
       } catch (err: any) {
         console.error("Error building leaderboard:", err);
-        return Response.json({ error: err.message, leaderboard: [] }, { status: 200 });
+        return Response.json({ error: err.message, leaderboard: [], globalTokens: 0, globalTraces: 0, globalContributors: 0 }, { status: 200 });
       }
     },
 

@@ -24,8 +24,53 @@ interface HomePanelProps {
   onNavigate: (tab: string) => void;
 }
 
+function LaurelStatCard({
+  value,
+  label,
+  accentClass,
+  svgColor,
+}: {
+  value: string | number;
+  label: string;
+  accentClass: string;
+  svgColor: string;
+}) {
+  return (
+    <Card className="bg-card/40 border-border/80 backdrop-blur-md shadow-lg overflow-hidden flex flex-col items-center justify-center p-6 text-center relative group hover:scale-[1.01] transition-transform duration-200">
+      {/* Laurel branches background SVG */}
+      <div className={`absolute inset-0 flex items-center justify-center pointer-events-none opacity-[0.08] group-hover:opacity-[0.12] transition-opacity duration-300 ${svgColor}`}>
+        <svg viewBox="0 0 100 100" className="w-28 h-28">
+          {/* Left Wreath Branch */}
+          <path d="M 35,80 C 15,70 15,30 40,15" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+          <path d="M 22,65 C 20,60 25,50 28,52" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+          <path d="M 20,48 C 18,43 23,33 26,35" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+          <path d="M 26,30 C 24,25 29,15 32,17" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+          {/* Right Wreath Branch */}
+          <path d="M 65,80 C 85,70 85,30 60,15" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+          <path d="M 78,65 C 80,60 75,50 72,52" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+          <path d="M 80,48 C 82,43 77,33 74,35" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+          <path d="M 74,30 C 76,25 71,15 68,17" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+        </svg>
+      </div>
+
+      {/* Content */}
+      <div className="relative z-10 space-y-1">
+        <span className="text-[10px] uppercase font-bold tracking-widest text-muted-foreground block">
+          {label}
+        </span>
+        <div className={`text-3xl font-extrabold tracking-tight ${accentClass}`}>
+          {value}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export function HomePanel({ onNavigate }: HomePanelProps) {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [globalTokens, setGlobalTokens] = useState(0);
+  const [globalTraces, setGlobalTraces] = useState(0);
+  const [globalContributors, setGlobalContributors] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,6 +82,9 @@ export function HomePanel({ onNavigate }: HomePanelProps) {
       if (!res.ok) throw new Error("Failed to load leaderboard");
       const data = await res.json();
       setLeaderboard(data.leaderboard || []);
+      setGlobalTokens(data.globalTokens || 0);
+      setGlobalTraces(data.globalTraces || 0);
+      setGlobalContributors(data.globalContributors || 0);
     } catch (err: any) {
       console.error("Leaderboard error:", err);
       setError(err.message);
@@ -211,12 +259,34 @@ export function HomePanel({ onNavigate }: HomePanelProps) {
       <div className="text-center space-y-2 pt-2">
         <div className="flex items-center justify-center gap-2">
           <TrendingUp className="w-5 h-5 text-indigo-400" />
-          <h1 className="text-xl font-extrabold tracking-tight">Community Leaderboard</h1>
+          <h1 className="text-xl font-extrabold tracking-tight">Community Achievements</h1>
         </div>
         <p className="text-xs text-muted-foreground max-w-md mx-auto leading-relaxed">
           Contributors ranked by total tokens logged and number of interaction traces donated.
           Opt-in or out via <button className="text-indigo-400 hover:underline cursor-pointer font-semibold" onClick={() => onNavigate("settings")}>Settings</button>.
         </p>
+      </div>
+
+      {/* Global Stat Achievements (Laurel Wreaths) */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+        <LaurelStatCard
+          value={formatNumber(globalTokens)}
+          label="Total Tokens Donated"
+          accentClass="text-amber-400"
+          svgColor="text-amber-500"
+        />
+        <LaurelStatCard
+          value={formatNumber(globalTraces)}
+          label="Total Traces Contributed"
+          accentClass="text-emerald-400"
+          svgColor="text-emerald-500"
+        />
+        <LaurelStatCard
+          value={formatNumber(globalContributors)}
+          label="Total Contributors"
+          accentClass="text-indigo-400"
+          svgColor="text-indigo-500"
+        />
       </div>
 
       {/* Leaderboards */}
