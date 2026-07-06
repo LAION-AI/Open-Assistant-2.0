@@ -1,7 +1,7 @@
 import json
 import httpx
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from .config import load_config
 from .redactor import load_classifier, redact_messages
@@ -20,6 +20,13 @@ app.add_middleware(
 config = load_config()
 classifier = None
 
+# Runtime stats
+stats = {
+    "uploads_ok": 0,
+    "uploads_failed": 0,
+    "redacting": 0,   # count of in-flight redactions
+}
+
 @app.on_event("startup")
 def startup_event():
     global classifier
@@ -28,6 +35,88 @@ def startup_event():
         print("On-device PII redactor loaded successfully.")
     except Exception as e:
         print(f"Warning: Could not load redactor model on startup. It will load lazily later: {e}")
+
+@app.get("/", response_class=HTMLResponse)
+async def status_page():
+    cfg = load_config()
+    api_key = cfg.get("api_key", "")
+    redacted_key = "(set in the Open Assistant app)" if not api_key else f"{api_key[:4]}{'*' * (len(api_key) - 4)}"
+    rows = [
+        ("Open Assistant Server URL", cfg.get("server_url", "")),
+        ("Open Assistant API Key", redacted_key),
+        ("Upstream API Base URL", cfg.get("upstream_url", "")),
+        ("Upstream Default Model", cfg.get("upstream_model", "")),
+        ("Upstream API Key", "***" if cfg.get("upstream_key") else "(not set)"),
+        ("Local Proxy Port", str(cfg.get("port", 2048))),
+    ]
+    rows_html = "".join(
+        f"<tr><td>{label}</td><td><code>{value}</code></td></tr>"
+        for label, value in rows
+    )
+    redacting = stats["redacting"] > 0
+    redacting_badge = (
+        '<span class="badge badge-busy">redacting&hellip;</span>' if redacting else ""
+    )
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Open Assistant Proxy</title>
+  {'<meta http-equiv="refresh" content="3">' if redacting else ''}
+  <style>
+    body {{ font-family: system-ui, sans-serif; max-width: 640px; margin: 48px auto; padding: 0 16px; color: #1a1a1a; }}
+    h1 {{ font-size: 1.4rem; margin-bottom: 4px; }}
+    p.sub {{ color: #555; margin-top: 0; font-size: 0.9rem; }}
+    table {{ border-collapse: collapse; width: 100%; margin-top: 24px; }}
+    th, td {{ text-align: left; padding: 10px 12px; border-bottom: 1px solid #e5e5e5; font-size: 0.9rem; }}
+    th {{ color: #555; font-weight: 600; }}
+    code {{ background: #f3f3f3; padding: 2px 6px; border-radius: 4px; }}
+    .badge {{ display: inline-block; color: #fff; font-size: 0.75rem;
+              padding: 2px 8px; border-radius: 99px; vertical-align: middle; margin-left: 8px; }}
+    .badge-running {{ background: #22c55e; }}
+    .badge-busy {{ background: #f59e0b; }}
+    .stats {{ display: flex; gap: 24px; margin-top: 28px; }}
+    .stat {{ background: #f9f9f9; border: 1px solid #e5e5e5; border-radius: 8px;
+             padding: 12px 20px; flex: 1; text-align: center; }}
+    .stat-num {{ font-size: 1.6rem; font-weight: 700; }}
+    .stat-ok .stat-num {{ color: #22c55e; }}
+    .stat-fail .stat-num {{ color: #ef4444; }}
+    .stat-busy .stat-num {{ color: #f59e0b; }}
+    .stat-label {{ font-size: 0.78rem; color: #666; margin-top: 2px; }}
+  </style>
+</head>
+<body>
+  <h1>Open Assistant Proxy
+    <span class="badge badge-running">running</span>
+    {redacting_badge}
+  </h1>
+  <p class="sub">OpenAI-compatible endpoint: <code>/v1/chat/completions</code></p>
+  <div class="stats">
+    <div class="stat stat-ok">
+      <div class="stat-num">{stats['uploads_ok']}</div>
+      <div class="stat-label">traces uploaded</div>
+    </div>
+    <div class="stat stat-busy">
+      <div class="stat-num">{stats['redacting']}</div>
+      <div class="stat-label">processing</div>
+    </div>
+    <div class="stat stat-fail">
+      <div class="stat-num">{stats['uploads_failed']}</div>
+      <div class="stat-label">upload failures</div>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+    <tbody>{rows_html}</tbody>
+  </table>
+  <p style="margin-top:24px;font-size:0.8rem;color:#888;">
+    Run <code>oa-proxy config</code> to change these settings.
+  </p>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
+
 
 async def upload_interaction(prompt_messages: list, assistant_response: str, model: str):
     global classifier
@@ -53,11 +142,15 @@ async def upload_interaction(prompt_messages: list, assistant_response: str, mod
         })
         
     # Redact PII on-device
+    stats["redacting"] += 1
     try:
         redacted_messages = redact_messages(history, classifier)
     except Exception as e:
         print(f"PII Redaction failed: {e}")
+        stats["redacting"] -= 1
         return
+    finally:
+        stats["redacting"] = max(0, stats["redacting"] - 1)
         
     api_key = config.get("api_key")
     if not api_key:
@@ -86,10 +179,13 @@ async def upload_interaction(prompt_messages: list, assistant_response: str, mod
         async with httpx.AsyncClient() as client:
             res = await client.post(upload_url, json=payload, headers=headers, timeout=15.0)
             if res.status_code == 200:
+                stats["uploads_ok"] += 1
                 print(f"Successfully uploaded redacted trace to Open Assistant ({len(redacted_messages)} turns).")
             else:
+                stats["uploads_failed"] += 1
                 print(f"Failed to upload trace: Server responded with status {res.status_code}: {res.text}")
     except Exception as e:
+        stats["uploads_failed"] += 1
         print(f"Error uploading trace to Open Assistant: {e}")
 
 @app.post("/v1/chat/completions")
