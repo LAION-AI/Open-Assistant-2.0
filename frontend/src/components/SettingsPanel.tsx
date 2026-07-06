@@ -3,7 +3,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { Server, Key, Brain, CheckCircle, HelpCircle, RefreshCw, Copy, Check, Trash2, Network, Code2, Download, Loader2 } from "lucide-react";
+import { Server, Key, Brain, CheckCircle, HelpCircle, RefreshCw, Copy, Check, Trash2, Network, Code2, Download, Loader2, Trophy, Eye, EyeOff } from "lucide-react";
 import { LoginMethods } from "./LoginMethods";
 
 interface User {
@@ -15,10 +15,11 @@ interface User {
   byoeKey?: string | null;
   byoeModel?: string | null;
   apiKey?: string | null;
-  email?: string | null;
   emailVerified?: number;
   hasPassword?: boolean;
   hasPasskey?: boolean;
+  showInLeaderboard?: number;
+  isAdmin: number;
 }
 
 interface SettingsPanelProps {
@@ -583,6 +584,51 @@ export function SettingsPanel({ user, onUpdateUser }: SettingsPanelProps) {
   -H "Content-Type: application/json" \\
   -d '{"model":"${byoeModel || user.byoeModel || "<model>"}","messages":[{"role":"user","content":"hi"}]}'`}
           </pre>
+        </div>
+      </CardContent>
+    </Card>
+
+    {/* Leaderboard Privacy */}
+    <Card className="bg-card/40 backdrop-blur-md border border-border/80 shadow-xl overflow-hidden">
+      <CardContent className="p-5">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center flex-shrink-0">
+              <Trophy className="w-4 h-4 text-amber-400" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold">Leaderboard Visibility</div>
+              <div className="text-[11px] text-muted-foreground leading-relaxed">
+                {user.showInLeaderboard !== 0 ? "Your username and stats appear on the public leaderboard." : "You are hidden from the public leaderboard."}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={async () => {
+              const newVal = user.showInLeaderboard === 0;
+              try {
+                const res = await fetch("/api/user/leaderboard", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ show: newVal }),
+                });
+                if (!res.ok) throw new Error("Failed to update preference");
+                const data = await res.json();
+                onUpdateUser(data.user);
+              } catch (err) {
+                console.error("Leaderboard toggle error:", err);
+              }
+            }}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 flex-shrink-0 cursor-pointer ${
+              user.showInLeaderboard !== 0 ? "bg-emerald-600" : "bg-muted border border-border/50"
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${
+                user.showInLeaderboard !== 0 ? "translate-x-6" : "translate-x-1"
+              }`}
+            />
+          </button>
         </div>
       </CardContent>
     </Card>

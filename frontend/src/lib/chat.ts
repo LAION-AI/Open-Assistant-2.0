@@ -207,7 +207,9 @@ export function messageSignature(prompt: any): Sig {
 export function isPrefix(short: Sig, long: Sig): boolean {
   if (short.length > long.length) return false;
   for (let i = 0; i < short.length; i++) {
-    if (short[i].role !== long[i].role || short[i].text !== long[i].text) return false;
+    const s = short[i];
+    const l = long[i];
+    if (!s || !l || s.role !== l.role || s.text !== l.text) return false;
   }
   return true;
 }
@@ -215,7 +217,9 @@ export function isPrefix(short: Sig, long: Sig): boolean {
 /** Assemble a Conversation from its member rows (ascending by time). */
 function toConversation(logs: InteractionLog[]): Conversation {
   const latest = logs[logs.length - 1];
+  if (!latest) throw new Error("Empty conversation logs");
   const promptObj = parseJsonObject(latest.prompt);
+  const firstLog = logs[0] || latest;
   return {
     id: latest.id,
     userId: latest.userId,
@@ -224,7 +228,7 @@ function toConversation(logs: InteractionLog[]): Conversation {
     model: (promptObj?.model || "").trim(),
     logs,
     latest,
-    createdAt: logs[0].createdAt,
+    createdAt: firstLog.createdAt,
     updatedAt: latest.createdAt,
     totalTokens: logs.reduce((s, l) => s + (l.tokens || 0), 0),
     turnCount: getTurnCount(getMessages(latest.prompt)),
@@ -275,7 +279,8 @@ export function groupConversations(logs: InteractionLog[]): Conversation[] {
     for (const c of chains) {
       if (c.userId !== log.userId) continue;
       if (sig.length > c.sig.length && isPrefix(c.sig, sig)) {
-        const t = c.logs[c.logs.length - 1].createdAt;
+        const lastLog = c.logs[c.logs.length - 1];
+        const t = lastLog ? lastLog.createdAt : 0;
         if (c.sig.length > bestLen || (c.sig.length === bestLen && t > bestTime)) {
           best = c;
           bestLen = c.sig.length;

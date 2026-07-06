@@ -4,7 +4,7 @@ export function parseCookies(cookieHeader: string | null): Record<string, string
 
   cookieHeader.split(";").forEach(cookie => {
     const parts = cookie.split("=");
-    const name = parts[0].trim();
+    const name = (parts[0] || "").trim();
     if (name) {
       cookies[name] = parts.slice(1).join("=").trim();
     }

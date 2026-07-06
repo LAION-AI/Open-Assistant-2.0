@@ -9,6 +9,7 @@ export interface UserRecord {
   apiKey?: string | null;
   passwordHash?: string | null;
   emailVerified?: number;
+  showInLeaderboard?: number;
   isAdmin: number;
 }
 
@@ -46,4 +47,6 @@ export interface DatabaseAdapter {
   getCredential(id: string): Promise<StoredCredential | null>;
   saveCredential(userId: string, credential: StoredCredential): Promise<void>;
   updateCredentialCounter(id: string, counter: number): Promise<void>;
+  updateShowInLeaderboard(id: string, show: boolean): Promise<void>;
+  getLeaderboard(): Promise<{ username: string; totalTokens: number; totalTraces: number }[]>;
 }

@@ -288,6 +288,7 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
     let total = 0;
     for (let i = 0; i < targets.length; i++) {
       const e = targets[i];
+      if (!e) continue;
       setRedactStatus(`Redacting conversation ${i + 1} / ${targets.length}…`);
       try {
         const { messages, count } = await redactMessages(e.trace.messages as any, classifier);

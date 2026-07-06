@@ -18,6 +18,9 @@ export function runMigrations() {
   try {
     sqlite.run("ALTER TABLE users ADD COLUMN email_verified INTEGER DEFAULT 0 NOT NULL");
   } catch {}
+  try {
+    sqlite.run("ALTER TABLE users ADD COLUMN show_in_leaderboard INTEGER DEFAULT 1 NOT NULL");
+  } catch {}
   console.log("Migrations complete.");
 }
 

@@ -43,6 +43,12 @@ type FeedbackEntry struct {
 	ResolvedAt int64  `json:"resolvedAt"`
 }
 
+type LeaderboardEntry struct {
+	UserID      string `json:"userId"`
+	TotalTokens int64  `json:"totalTokens"`
+	TotalTraces int64  `json:"totalTraces"`
+}
+
 // LogRepository defines the database adapter contract
 type LogRepository interface {
 	SaveLog(ctx context.Context, entry *LogEntry) error
@@ -67,6 +73,9 @@ type LogRepository interface {
 	SaveFeedback(ctx context.Context, entry *FeedbackEntry) error
 	GetFeedback(ctx context.Context, status string) ([]*FeedbackEntry, error)
 	UpdateFeedbackStatus(ctx context.Context, id int64, status string) (int64, error)
+
+	// Leaderboard: aggregate per-user token totals and trace counts.
+	GetLeaderboard(ctx context.Context) ([]*LeaderboardEntry, error)
 
 	Close() error
 }

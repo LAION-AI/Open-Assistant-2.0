@@ -318,6 +318,40 @@ func main() {
 		w.Write([]byte(`{"success":true}`))
 	})
 
+	// Leaderboard: per-user token totals and trace counts
+	mux.HandleFunc("/api/leaderboard", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		entries, err := repo.GetLeaderboard(r.Context())
+		if err != nil {
+			log.Printf("Error getting leaderboard: %v", err)
+			http.Error(w, fmt.Sprintf("Error getting leaderboard: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		jsonBytes, err := json.Marshal(map[string]interface{}{
+			"leaderboard": entries,
+		})
+		if err != nil {
+			http.Error(w, "Error marshalling leaderboard", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write(jsonBytes)
+	})
+
 	log.Printf("🚀 Open Assistant 2.0 Go proxy backend starting on port %s...", port)
 	if err := http.ListenAndServe(":"+port, mux); err != nil {
 		log.Fatalf("Server stopped: %v", err)

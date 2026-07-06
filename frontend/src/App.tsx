@@ -4,6 +4,7 @@ import { ChatPanel } from "./components/ChatPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AdminPanel } from "./components/AdminPanel";
 import { UploadsPanel } from "./components/UploadsPanel";
+import { HomePanel } from "./components/HomePanel";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { FeedbackButton } from "./components/FeedbackButton";
 import { EmailAuth } from "./components/EmailAuth";
@@ -23,6 +24,7 @@ import {
   HelpCircle,
   ShieldAlert,
   Boxes,
+  Home,
 } from "lucide-react";
 import logo from "./logo.svg";
 import "./index.css";
@@ -36,11 +38,11 @@ interface User {
   byoeKey?: string | null;
   byoeModel?: string | null;
   apiKey?: string | null;
-  email?: string | null;
   emailVerified?: number;
   hasPassword?: boolean;
   hasPasskey?: boolean;
   isAdmin: number;
+  showInLeaderboard?: number;
 }
 
 export function App() {
@@ -49,7 +51,7 @@ export function App() {
   const [authUsername, setAuthUsername] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"chat" | "uploads" | "settings" | "admin">("chat");
+  const [activeTab, setActiveTab] = useState<"home" | "chat" | "uploads" | "settings" | "admin">("home");
   const [passkeySupported, setPasskeySupported] = useState(true);
   const [isRegistering, setIsRegistering] = useState(false);
 
@@ -269,6 +271,15 @@ export function App() {
             {/* Navigation Tabs */}
             <div className="flex items-center bg-muted/65 p-1 rounded-xl border border-border/40">
               <Button
+                variant={activeTab === "home" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setActiveTab("home")}
+                className="h-8 rounded-lg px-3 text-xs gap-1.5 font-semibold"
+              >
+                <Home className="w-3.5 h-3.5" />
+                <span>Home</span>
+              </Button>
+              <Button
                 variant={activeTab === "chat" ? "secondary" : "ghost"}
                 size="sm"
                 onClick={() => setActiveTab("chat")}
@@ -293,7 +304,7 @@ export function App() {
                 className="h-8 rounded-lg px-3 text-xs gap-1.5 font-semibold"
               >
                 <Settings className="w-3.5 h-3.5" />
-                <span>BYOE</span>
+                <span>Settings</span>
               </Button>
               {user.isAdmin === 1 && (
                 <Button
@@ -333,10 +344,12 @@ export function App() {
       ) : (
         <main className="flex-1 min-h-0 overflow-y-auto">
           <div className="max-w-4xl w-full mx-auto px-4 py-8">
-            {activeTab === "uploads" ? (
+            {activeTab === "home" ? (
+              <HomePanel onNavigate={(tab: string) => setActiveTab(tab as any)} />
+            ) : activeTab === "uploads" ? (
               <UploadsPanel />
             ) : activeTab === "settings" ? (
-              <SettingsPanel user={user} onUpdateUser={setUser} />
+              <SettingsPanel user={user} onUpdateUser={(u) => setUser(u)} />
             ) : (
               <AdminPanel />
             )}

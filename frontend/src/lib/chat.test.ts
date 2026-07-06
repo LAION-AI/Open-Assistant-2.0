@@ -189,10 +189,10 @@ describe("buildTurns", () => {
     const { systemMsgs, turns } = buildTurns(messages, { content: "a frog", reasoning: "" });
     expect(systemMsgs).toHaveLength(0);
     expect(turns).toHaveLength(1);
-    expect(turns[0].user.content).toBe("riddle");
-    expect(turns[0].assistant.content).toBe("a frog");
-    expect(turns[0].isFinal).toBe(true);
-    expect(turns[0].userTurn).toBe(1);
+    expect(turns[0]!.user.content).toBe("riddle");
+    expect(turns[0]!.assistant.content).toBe("a frog");
+    expect(turns[0]!.isFinal).toBe(true);
+    expect(turns[0]!.userTurn).toBe(1);
   });
 
   test("reconstructs a multi-turn conversation", () => {
@@ -207,16 +207,16 @@ describe("buildTurns", () => {
     expect(systemMsgs.map(m => m.content)).toEqual(["be nice"]);
     expect(turns).toHaveLength(2);
 
-    expect(turns[0].user.content).toBe("q1");
-    expect(turns[0].assistant.content).toBe("a1");
-    expect(turns[0].isFinal).toBe(false);
-    expect(turns[0].userTurn).toBe(1);
+    expect(turns[0]!.user.content).toBe("q1");
+    expect(turns[0]!.assistant.content).toBe("a1");
+    expect(turns[0]!.isFinal).toBe(false);
+    expect(turns[0]!.userTurn).toBe(1);
 
-    expect(turns[1].user.content).toBe("q2");
-    expect(turns[1].assistant.content).toBe("a2");
-    expect(turns[1].assistant.reasoning_content).toBe("thinking");
-    expect(turns[1].isFinal).toBe(true);
-    expect(turns[1].userTurn).toBe(2);
+    expect(turns[1]!.user.content).toBe("q2");
+    expect(turns[1]!.assistant.content).toBe("a2");
+    expect(turns[1]!.assistant.reasoning_content).toBe("thinking");
+    expect(turns[1]!.isFinal).toBe(true);
+    expect(turns[1]!.userTurn).toBe(2);
   });
 
   test("handles an empty/unparseable conversation", () => {

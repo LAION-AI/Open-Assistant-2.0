@@ -171,4 +171,20 @@ export class DrizzleAdapter implements DatabaseAdapter {
   async updateCredentialCounter(id: string, counter: number): Promise<void> {
     await this.db.update(credentials).set({ counter }).where(eq(credentials.id, id)).run();
   }
+
+  async updateShowInLeaderboard(id: string, show: boolean): Promise<void> {
+    await this.db.update(users).set({ showInLeaderboard: show ? 1 : 0 }).where(eq(users.id, id)).run();
+  }
+
+  async getLeaderboard(): Promise<{ username: string; totalTokens: number; totalTraces: number }[]> {
+    // This method returns all users who opted-in to the leaderboard.
+    // The actual token/trace counts come from the Go backend, so we just
+    // return the user list here; the Bun route will merge the data.
+    const res = await this.db
+      .select({ id: users.id, username: users.username })
+      .from(users)
+      .where(eq(users.showInLeaderboard, 1))
+      .all();
+    return res.map(u => ({ username: u.username, totalTokens: 0, totalTraces: 0 }));
+  }
 }

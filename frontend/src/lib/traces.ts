@@ -298,8 +298,9 @@ export function traceToConversation(trace: ParsedTrace): Conversation {
   const messages = trace.messages;
   let history = messages.slice();
   let finalAssistant: any = { role: "assistant", content: "" };
-  if (messages.length && messages[messages.length - 1].role === "assistant") {
-    finalAssistant = messages[messages.length - 1];
+  const lastMsg = messages[messages.length - 1];
+  if (messages.length && lastMsg && lastMsg.role === "assistant") {
+    finalAssistant = lastMsg;
     history = messages.slice(0, -1);
   }
   const log: InteractionLog = {
@@ -317,5 +318,7 @@ export function traceToConversation(trace: ParsedTrace): Conversation {
     tokens: 0,
     createdAt: Math.floor(Date.now() / 1000),
   };
-  return groupConversations([log])[0];
+  const conv = groupConversations([log])[0];
+  if (!conv) throw new Error("Failed to group conversation");
+  return conv;
 }

@@ -11,6 +11,7 @@ export const users = sqliteTable("users", {
   apiKey: text("api_key"), // personal key for routing external tools through our logging proxy
   passwordHash: text("password_hash"), // for email+password login (null = passkey-only)
   emailVerified: integer("email_verified").default(0).notNull(),
+  showInLeaderboard: integer("show_in_leaderboard").default(1).notNull(),
   isAdmin: integer("is_admin").default(0).notNull(),
   createdAt: integer("created_at").notNull(),
 });

@@ -41,9 +41,11 @@ function getRpIdAndOrigin(req: Request) {
   // Behind a TLS-terminating reverse proxy (e.g. Caddy) the server sees plain
   // HTTP, so trust X-Forwarded-* to reconstruct the browser's real https origin —
   // otherwise WebAuthn's expectedOrigin won't match and verification fails.
-  const host = (req.headers.get("x-forwarded-host") || url.host).split(",")[0].trim();
-  const proto = (req.headers.get("x-forwarded-proto") || url.protocol.replace(":", "")).split(",")[0].trim();
-  const hostname = host.split(":")[0];
+  const hostVal = req.headers.get("x-forwarded-host") || url.host;
+  const host = (hostVal.split(",")[0] || hostVal).trim();
+  const protoVal = req.headers.get("x-forwarded-proto") || url.protocol.replace(":", "");
+  const proto = (protoVal.split(",")[0] || protoVal).trim();
+  const hostname = (host.split(":")[0] || host).trim();
 
   const isAllowed = ALLOWED_HOSTS.includes(hostname);
   const rpId = isAllowed ? hostname : (ALLOWED_HOSTS[0] || "localhost");
@@ -126,7 +128,7 @@ async function resolveLocalHostIfNecessary(urlStr: string): Promise<string> {
       } else {
         // Fallback to the first resolved IP if none answered the TCP check
         console.log(`No active IP responded on port ${port}, falling back to first resolved: ${ips[0]}`);
-        url.hostname = ips[0];
+        url.hostname = ips[0] || "";
         return url.toString();
       }
     }
@@ -273,13 +275,13 @@ function agIsValidMessage(b: Uint8Array): boolean {
   if (b.length === 0) return false;
   while (i < b.length) {
     let tag = 0, shift = 0;
-    while (true) { if (i >= b.length) return false; const x = b[i++]; tag |= (x & 0x7f) << shift; if (!(x & 0x80)) break; shift += 7; if (shift > 35) return false; }
+    while (true) { if (i >= b.length) return false; const x = b[i++] ?? 0; tag |= (x & 0x7f) << shift; if (!(x & 0x80)) break; shift += 7; if (shift > 35) return false; }
     const wt = tag & 7, fn = tag >>> 3;
     if (fn === 0) return false;
-    if (wt === 0) { while (i < b.length && (b[i] & 0x80)) i++; if (i >= b.length) return false; i++; }
+    if (wt === 0) { while (i < b.length && ((b[i] ?? 0) & 0x80)) i++; if (i >= b.length) return false; i++; }
     else if (wt === 1) { i += 8; if (i > b.length) return false; }
     else if (wt === 5) { i += 4; if (i > b.length) return false; }
-    else if (wt === 2) { let len = 0, sh = 0; while (true) { if (i >= b.length) return false; const x = b[i++]; len |= (x & 0x7f) << sh; if (!(x & 0x80)) break; sh += 7; if (sh > 35) return false; } if (i + len > b.length) return false; i += len; }
+    else if (wt === 2) { let len = 0, sh = 0; while (true) { if (i >= b.length) return false; const x = b[i++] ?? 0; len |= (x & 0x7f) << sh; if (!(x & 0x80)) break; sh += 7; if (sh > 35) return false; } if (i + len > b.length) return false; i += len; }
     else return false;
   }
   return true;
@@ -312,15 +314,15 @@ function agExtractText(buf: Uint8Array): string {
     let i = 0;
     while (i < b.length) {
       let tag = 0, shift = 0, ok = true;
-      while (true) { if (i >= b.length) { ok = false; break; } const x = b[i++]; tag |= (x & 0x7f) << shift; if (!(x & 0x80)) break; shift += 7; if (shift > 35) { ok = false; break; } }
+      while (true) { if (i >= b.length) { ok = false; break; } const x = b[i++] ?? 0; tag |= (x & 0x7f) << shift; if (!(x & 0x80)) break; shift += 7; if (shift > 35) { ok = false; break; } }
       if (!ok) break;
       const wt = tag & 7;
-      if (wt === 0) { while (i < b.length && (b[i] & 0x80)) i++; i++; }
+      if (wt === 0) { while (i < b.length && ((b[i] ?? 0) & 0x80)) i++; i++; }
       else if (wt === 1) i += 8;
       else if (wt === 5) i += 4;
       else if (wt === 2) {
         let len = 0, sh = 0, ok2 = true;
-        while (true) { if (i >= b.length) { ok2 = false; break; } const x = b[i++]; len |= (x & 0x7f) << sh; if (!(x & 0x80)) break; sh += 7; if (sh > 35) { ok2 = false; break; } }
+        while (true) { if (i >= b.length) { ok2 = false; break; } const x = b[i++] ?? 0; len |= (x & 0x7f) << sh; if (!(x & 0x80)) break; sh += 7; if (sh > 35) { ok2 = false; break; } }
         if (!ok2 || i + len > b.length) break;
         const sub = b.subarray(i, i + len); i += len;
         if (len > 2 && agIsValidMessage(sub)) walk(sub, depth + 1);
@@ -471,7 +473,8 @@ function detectPlatform(req: Request): string {
   if (ua.includes("python")) return "python";
   if (ua.includes("curl")) return "curl";
   if (ua.includes("node")) return "node";
-  return ua.split("/")[0].slice(0, 40) || "api";
+  const firstPart = ua.split("/")[0] || "api";
+  return firstPart.slice(0, 40) || "api";
 }
 
 // Feedback API is accessible to (a) the configured bearer token — for an
@@ -1166,6 +1169,69 @@ const server = serve({
       } catch (err: any) {
         console.error("Error updating BYOE settings:", err);
         return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Update leaderboard visibility preference
+    "/api/user/leaderboard": async req => {
+      try {
+        if (req.method !== "POST") {
+          return Response.json({ error: "Method not allowed" }, { status: 405 });
+        }
+        const cookies = parseCookies(req.headers.get("cookie"));
+        const sessionToken = cookies["session"];
+        if (!sessionToken) {
+          return Response.json({ error: "Unauthorized" }, { status: 401 });
+        }
+        const payload = await verifySessionToken(sessionToken);
+        if (!payload) {
+          return Response.json({ error: "Invalid session" }, { status: 401 });
+        }
+
+        const { show } = await req.json();
+        await dbAdapter.updateShowInLeaderboard(payload.userId, !!show);
+        const updatedUser = await dbAdapter.getUser(payload.userId);
+        return Response.json({ success: true, user: updatedUser });
+      } catch (err: any) {
+        console.error("Error updating leaderboard preference:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Public leaderboard — merges Go backend stats with user-DB opt-in filter
+    "/api/leaderboard": async req => {
+      try {
+        // 1. Get aggregated stats from Go backend
+        const goRes = await fetch(`${BACKEND_URL}/api/leaderboard`);
+        if (!goRes.ok) {
+          throw new Error("Failed to fetch leaderboard from backend");
+        }
+        const goData = await goRes.json();
+        const statsEntries: { userId: string; totalTokens: number; totalTraces: number }[] =
+          goData.leaderboard || [];
+
+        // 2. Get all users who opted in to leaderboard
+        const allUsers = await db.select().from(users).all();
+        const optedIn = new Map<string, string>();
+        for (const u of allUsers) {
+          if (u.showInLeaderboard === 1) {
+            optedIn.set(u.id, u.username);
+          }
+        }
+
+        // 3. Merge: only include users who opted in
+        const leaderboard = statsEntries
+          .filter(e => optedIn.has(e.userId))
+          .map(e => ({
+            username: optedIn.get(e.userId) || "Unknown",
+            totalTokens: e.totalTokens,
+            totalTraces: e.totalTraces,
+          }));
+
+        return Response.json({ leaderboard });
+      } catch (err: any) {
+        console.error("Error building leaderboard:", err);
+        return Response.json({ error: err.message, leaderboard: [] }, { status: 200 });
       }
     },
 

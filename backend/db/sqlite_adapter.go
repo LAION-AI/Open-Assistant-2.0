@@ -259,6 +259,32 @@ func (r *SQLiteRepository) UpdateFeedbackStatus(ctx context.Context, id int64, s
 	return n, nil
 }
 
+func (r *SQLiteRepository) GetLeaderboard(ctx context.Context) ([]*LeaderboardEntry, error) {
+	query := `SELECT user_id, COALESCE(SUM(tokens), 0) AS total_tokens, COUNT(*) AS total_traces
+		FROM interaction_logs
+		GROUP BY user_id
+		ORDER BY total_tokens DESC`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []*LeaderboardEntry
+	for rows.Next() {
+		var e LeaderboardEntry
+		if err := rows.Scan(&e.UserID, &e.TotalTokens, &e.TotalTraces); err != nil {
+			return nil, err
+		}
+		entries = append(entries, &e)
+	}
+	if entries == nil {
+		entries = []*LeaderboardEntry{}
+	}
+	return entries, nil
+}
+
 func (r *SQLiteRepository) Close() error {
 	return r.db.Close()
 }
