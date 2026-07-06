@@ -330,7 +330,7 @@ export function HomePanel({ onNavigate }: HomePanelProps) {
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
           {usageModes.map((mode) => (
             <button
-              key={mode.tab}
+              key={mode.title}
               onClick={() => onNavigate(mode.tab)}
               className={`text-left group rounded-2xl border ${mode.borderColor} bg-gradient-to-br ${mode.gradient} p-5 space-y-3 hover:scale-[1.02] transition-all duration-200 cursor-pointer`}
             >
