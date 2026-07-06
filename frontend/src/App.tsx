@@ -52,6 +52,7 @@ export function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [activeTab, setActiveTab] = useState<"home" | "chat" | "uploads" | "settings" | "admin">("home");
+  const [settingsSubTab, setSettingsSubTab] = useState<"byoe" | "v1proxy" | "pyproxy">("byoe");
   const [passkeySupported, setPasskeySupported] = useState(true);
   const [isRegistering, setIsRegistering] = useState(false);
 
@@ -77,6 +78,19 @@ export function App() {
       setPasskeySupported(supported);
     });
   }, []);
+
+  const handleNavigate = (tab: string) => {
+    if (tab.startsWith("settings-")) {
+      const sub = tab.substring(9) as "byoe" | "v1proxy" | "pyproxy";
+      setActiveTab("settings");
+      setSettingsSubTab(sub);
+    } else if (tab === "settings") {
+      setActiveTab("settings");
+      setSettingsSubTab("byoe");
+    } else {
+      setActiveTab(tab as any);
+    }
+  };
 
   const handleRegister = async (e: FormEvent) => {
     e.preventDefault();
@@ -344,12 +358,12 @@ export function App() {
       ) : (
         <main className="flex-1 min-h-0 overflow-y-auto">
           <div className="max-w-4xl w-full mx-auto px-4 py-8">
-            {activeTab === "home" ? (
-              <HomePanel onNavigate={(tab: string) => setActiveTab(tab as any)} />
+             {activeTab === "home" ? (
+              <HomePanel onNavigate={handleNavigate} />
             ) : activeTab === "uploads" ? (
               <UploadsPanel />
             ) : activeTab === "settings" ? (
-              <SettingsPanel user={user} onUpdateUser={(u) => setUser(u)} />
+              <SettingsPanel user={user} onUpdateUser={(u) => setUser(u)} subTab={settingsSubTab} onSubTabChange={setSettingsSubTab} />
             ) : (
               <AdminPanel />
             )}

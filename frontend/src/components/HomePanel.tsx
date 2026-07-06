@@ -247,7 +247,7 @@ export function HomePanel({ onNavigate }: HomePanelProps) {
       description:
         "Generate an API key and point any OpenAI-compatible tool (VS Code Copilot, Cursor, CLI scripts) at our /v1 proxy. Every request is transparently logged while being forwarded to your endpoint — zero workflow disruption.",
       action: "Configure proxy",
-      tab: "settings",
+      tab: "settings-v1proxy",
       gradient: "from-amber-500/15 to-orange-500/15",
       borderColor: "border-amber-500/20",
       iconColor: "text-amber-400",
@@ -258,7 +258,7 @@ export function HomePanel({ onNavigate }: HomePanelProps) {
       description:
         "Install open-assistant-proxy via pip to run a local completions proxy. Automatically redacts all PII on-device using your GPU (CUDA/MPS) before uploading traces safely to our server. You must create an account and generate an API key first!",
       action: "Get API Key",
-      tab: "settings",
+      tab: "settings-pyproxy",
       gradient: "from-rose-500/15 to-pink-500/15",
       borderColor: "border-rose-500/20",
       iconColor: "text-rose-400",
