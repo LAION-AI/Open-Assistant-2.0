@@ -53,6 +53,10 @@ async def status_page():
         f"<tr><td>{label}</td><td><code>{value}</code></td></tr>"
         for label, value in rows
     )
+    port = cfg.get("port", 2048)
+    upstream_model = cfg.get("upstream_model", "")
+    base_url = f"http://localhost:{port}/v1"
+
     redacting = stats["redacting"] > 0
     redacting_badge = (
         '<span class="badge badge-busy">redacting&hellip;</span>' if redacting else ""
@@ -71,7 +75,7 @@ async def status_page():
     table {{ border-collapse: collapse; width: 100%; margin-top: 24px; }}
     th, td {{ text-align: left; padding: 10px 12px; border-bottom: 1px solid #e5e5e5; font-size: 0.9rem; }}
     th {{ color: #555; font-weight: 600; }}
-    code {{ background: #f3f3f3; padding: 2px 6px; border-radius: 4px; }}
+    code {{ background: #f3f3f3; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }}
     .badge {{ display: inline-block; color: #fff; font-size: 0.75rem;
               padding: 2px 8px; border-radius: 99px; vertical-align: middle; margin-left: 8px; }}
     .badge-running {{ background: #22c55e; }}
@@ -84,6 +88,24 @@ async def status_page():
     .stat-fail .stat-num {{ color: #ef4444; }}
     .stat-busy .stat-num {{ color: #f59e0b; }}
     .stat-label {{ font-size: 0.78rem; color: #666; margin-top: 2px; }}
+    .endpoint-card {{ background: #f0f7ff; border: 1px solid #bfdbfe; border-radius: 10px;
+                      padding: 16px 20px; margin-top: 28px; }}
+    .endpoint-card h2 {{ font-size: 0.95rem; font-weight: 700; margin: 0 0 12px 0; color: #1e40af; }}
+    .endpoint-row {{ display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px;
+                     font-size: 0.88rem; flex-wrap: wrap; }}
+    .endpoint-row label {{ color: #555; min-width: 110px; flex-shrink: 0; }}
+    .endpoint-row code {{ background: #dbeafe; color: #1e3a8a; word-break: break-all; }}
+    .endpoint-card .hint {{ font-size: 0.78rem; color: #64748b; margin-top: 12px; border-top: 1px solid #bfdbfe; padding-top: 10px; }}
+    .endpoint-card .hint code {{ background: #e0f2fe; }}
+    .btn {{ display: inline-block; margin-top: 14px; padding: 7px 16px; background: #3b82f6;
+            color: #fff; border: none; border-radius: 6px; font-size: 0.85rem; cursor: pointer;
+            font-family: inherit; transition: background 0.15s; }}
+    .btn:hover {{ background: #2563eb; }}
+    .btn:disabled {{ background: #93c5fd; cursor: default; }}
+    #test-result {{ margin-top: 10px; font-size: 0.82rem; padding: 8px 12px; border-radius: 6px;
+                    display: none; word-break: break-all; }}
+    #test-result.ok {{ background: #dcfce7; color: #166534; border: 1px solid #86efac; }}
+    #test-result.err {{ background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }}
   </style>
 </head>
 <body>
@@ -92,6 +114,34 @@ async def status_page():
     {redacting_badge}
   </h1>
   <p class="sub">OpenAI-compatible endpoint: <code>/v1/chat/completions</code></p>
+
+  <div class="endpoint-card">
+    <h2>OpenAI-compatible endpoint settings</h2>
+    <div class="endpoint-row">
+      <label>Base URL</label>
+      <code>{base_url}</code>
+    </div>
+    <div class="endpoint-row">
+      <label>API Key</label>
+      <code>any-value</code>
+      <span style="color:#64748b;font-size:0.8rem;">(the proxy uses its own upstream key)</span>
+    </div>
+    <div class="endpoint-row">
+      <label>Model</label>
+      <code>{upstream_model}</code>
+    </div>
+    <div class="hint">
+      <strong>Claude Code:</strong>
+      <code>claude --openai-base-url {base_url} --openai-api-key any-value</code><br>
+      <br>
+      <strong>Environment variables:</strong><br>
+      <code>OPENAI_BASE_URL={base_url}</code><br>
+      <code>OPENAI_API_KEY=any-value</code>
+    </div>
+    <button class="btn" id="test-btn" onclick="testEndpoint()">Test endpoint through proxy</button>
+    <div id="test-result"></div>
+  </div>
+
   <div class="stats">
     <div class="stat stat-ok">
       <div class="stat-num">{stats['uploads_ok']}</div>
@@ -113,6 +163,41 @@ async def status_page():
   <p style="margin-top:24px;font-size:0.8rem;color:#888;">
     Run <code>oa-proxy config</code> to change these settings.
   </p>
+  <script>
+    async function testEndpoint() {{
+      const btn = document.getElementById('test-btn');
+      const result = document.getElementById('test-result');
+      btn.disabled = true;
+      btn.textContent = 'Testing\u2026';
+      result.style.display = 'none';
+      try {{
+        const res = await fetch('/v1/chat/completions', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer any-value' }},
+          body: JSON.stringify({{
+            model: '{upstream_model}',
+            messages: [{{ role: 'user', content: 'Reply with just the word PONG.' }}],
+            max_tokens: 16,
+            stream: false
+          }})
+        }});
+        const data = await res.json();
+        if (!res.ok) {{
+          throw new Error(data.detail || data.error?.message || 'HTTP ' + res.status);
+        }}
+        const text = data.choices?.[0]?.message?.content ?? JSON.stringify(data);
+        result.className = 'ok';
+        result.textContent = '\u2713 Upstream replied: ' + text.trim();
+      }} catch (e) {{
+        result.className = 'err';
+        result.textContent = '\u2717 ' + e.message;
+      }} finally {{
+        result.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Test endpoint through proxy';
+      }}
+    }}
+  </script>
 </body>
 </html>"""
     return HTMLResponse(content=html)
