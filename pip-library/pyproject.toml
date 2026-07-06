@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "open-assistant-proxy"
+version = "0.1.0"
+description = "On-device PII redaction and OpenAI-compatible local completion proxy for Open Assistant 2.0"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [
+    { name = "LAION AI", email = "info@laion.ai" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "transformers>=4.30.0",
+    "torch>=2.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "tqdm>=4.65.0",
+    "httpx>=0.24.0",
+    "huggingface-hub>=0.15.0",
+]
+
+[project.scripts]
+oa-proxy = "open_assistant_proxy.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["open_assistant_proxy"]

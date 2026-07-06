@@ -12,6 +12,7 @@ import {
   TrendingUp,
   Sparkles,
   ArrowRight,
+  Zap,
 } from "lucide-react";
 
 interface LeaderboardEntry {
@@ -251,6 +252,17 @@ export function HomePanel({ onNavigate }: HomePanelProps) {
       borderColor: "border-amber-500/20",
       iconColor: "text-amber-400",
     },
+    {
+      icon: <Zap className="w-5 h-5" />,
+      title: "Python SDK / Proxy",
+      description:
+        "Install open-assistant-proxy via pip to run a local completions proxy. Automatically redacts all PII on-device using your GPU (CUDA/MPS) before uploading traces safely to our server. You must create an account and generate an API key first!",
+      action: "Get API Key",
+      tab: "settings",
+      gradient: "from-rose-500/15 to-pink-500/15",
+      borderColor: "border-rose-500/20",
+      iconColor: "text-rose-400",
+    },
   ];
 
   return (
@@ -315,7 +327,7 @@ export function HomePanel({ onNavigate }: HomePanelProps) {
           <Sparkles className="w-4 h-4 text-indigo-400" />
           <h2 className="text-base font-bold tracking-tight text-center">How to Contribute</h2>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
           {usageModes.map((mode) => (
             <button
               key={mode.tab}

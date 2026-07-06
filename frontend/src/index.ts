@@ -1442,11 +1442,22 @@ const server = serve({
     "/api/traces/upload": async req => {
       try {
         if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        
+        let user = null;
         const cookies = parseCookies(req.headers.get("cookie"));
         const sessionToken = cookies["session"];
-        if (!sessionToken) return Response.json({ error: "Unauthorized" }, { status: 401 });
-        const payload = await verifySessionToken(sessionToken);
-        if (!payload) return Response.json({ error: "Invalid session" }, { status: 401 });
+        if (sessionToken) {
+          const payload = await verifySessionToken(sessionToken);
+          if (payload) {
+            user = await dbAdapter.getUser(payload.userId);
+          }
+        }
+        if (!user) {
+          user = await userFromApiKey(req);
+        }
+        if (!user) {
+          return Response.json({ error: "Unauthorized" }, { status: 401 });
+        }
 
         const body = await req.json().catch(() => ({}));
         const traces: any[] = Array.isArray(body?.traces) ? body.traces : [];
@@ -1468,7 +1479,7 @@ const server = serve({
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              userId: payload.userId,
+              userId: user.id,
               conversationId: crypto.randomUUID(),
               platform,
               prompt,
