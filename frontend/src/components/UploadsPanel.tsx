@@ -35,7 +35,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 
-type Filter = "all" | "chat" | "v1" | "trace";
+type Filter = "all" | "chat" | "v1" | "trace" | "pip-library";
 
 function formatTime(ts: number) {
   return new Date(ts > 9999999999 ? ts : ts * 1000).toLocaleString();
@@ -176,6 +176,7 @@ export function UploadsPanel() {
   const chatCount = conversations.filter(c => platformCategory(c.platform) === "chat").length;
   const v1Count = conversations.filter(c => platformCategory(c.platform) === "v1").length;
   const traceCount = conversations.filter(c => platformCategory(c.platform) === "trace").length;
+  const pipLibCount = conversations.filter(c => platformCategory(c.platform) === "pip-library").length;
 
   const deleteConversation = async (conv: Conversation) => {
     if (!confirm("Delete this conversation permanently? This removes it from the dataset.")) return;
@@ -238,7 +239,7 @@ export function UploadsPanel() {
           <CardContent className="p-6 flex items-center justify-between">
             <div className="space-y-1">
               <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">V1 Proxy / Traces</span>
-              <p className="text-3xl font-extrabold text-sky-400">{v1Count + traceCount}</p>
+              <p className="text-3xl font-extrabold text-sky-400">{v1Count + traceCount + pipLibCount}</p>
             </div>
             <div className="w-12 h-12 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400">
               <Code className="w-6 h-6" />
@@ -296,6 +297,7 @@ export function UploadsPanel() {
           <FilterBtn value="all" label={`All (${conversations.length})`} />
           <FilterBtn value="chat" label={`Chat (${chatCount})`} />
           <FilterBtn value="v1" label={`V1 Proxy (${v1Count})`} />
+          <FilterBtn value="pip-library" label={`V1 Local Proxy (${pipLibCount})`} />
           <FilterBtn value="trace" label={`Local traces (${traceCount})`} />
         </div>
 

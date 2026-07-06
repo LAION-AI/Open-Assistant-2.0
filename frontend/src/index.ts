@@ -1472,8 +1472,12 @@ const server = serve({
 
           // Mark uploads with a `trace:` prefix so they're distinguishable from
           // live V1-proxy sessions of the same tool (e.g. trace:claude-code).
+          // Exception: pip-library sends pre-processed live proxy sessions — keep
+          // that marker as-is so it gets its own filter tab in the UI.
           const detected = (tr.platform || "trace").toString();
-          const platform = (detected.startsWith("trace") ? detected : `trace:${detected}`).slice(0, 40);
+          const platform = (
+            detected === "pip-library" || detected.startsWith("trace") ? detected : `trace:${detected}`
+          ).slice(0, 40);
 
           const res = await fetch(`${BACKEND_URL}/api/log-interaction`, {
             method: "POST",

@@ -356,15 +356,17 @@ export function conversationHasThinking(conv: Conversation): boolean {
   return conv.logs.some(l => hasThinking(l.response));
 }
 
-export type PlatformCategory = "chat" | "v1" | "trace";
+export type PlatformCategory = "chat" | "v1" | "trace" | "pip-library";
 
 /**
- * Bucket a platform value: web chat, a live V1-proxy session, or an uploaded
- * local trace (marked with a `trace:` prefix at ingest time).
+ * Bucket a platform value: web chat, a live V1-proxy session, an uploaded
+ * local trace (marked with a `trace:` prefix at ingest time), or a pre-processed
+ * session from the pip-library local proxy.
  */
 export function platformCategory(platform: string | undefined): PlatformCategory {
   const p = (platform || "").toLowerCase();
   if (p === "" || p === "chat") return "chat";
+  if (p === "pip-library") return "pip-library";
   if (p === "trace" || p.startsWith("trace:")) return "trace";
   return "v1";
 }

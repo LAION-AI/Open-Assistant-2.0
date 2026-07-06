@@ -10,6 +10,7 @@ describe("platform categorization", () => {
     expect(platformCategory("claude-code")).toBe("v1");
     expect(platformCategory("trace:claude-code")).toBe("trace");
     expect(platformCategory("trace")).toBe("trace");
+    expect(platformCategory("pip-library")).toBe("pip-library");
   });
   test("labels strip the trace marker", () => {
     expect(platformLabel("trace:claude-code")).toBe("claude-code");
