@@ -3,7 +3,7 @@ import httpx
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from .config import load_config
+from .config import load_config, ensure_proxy_api_key, rotate_proxy_api_key
 from .redactor import load_classifier, redact_messages
 
 app = FastAPI(title="Open Assistant local completions proxy")
@@ -30,6 +30,7 @@ stats = {
 @app.on_event("startup")
 def startup_event():
     global classifier
+    ensure_proxy_api_key()
     try:
         classifier = load_classifier()
         print("On-device PII redactor loaded successfully.")
@@ -39,6 +40,7 @@ def startup_event():
 @app.get("/", response_class=HTMLResponse)
 async def status_page():
     cfg = load_config()
+    proxy_key = cfg.get("proxy_api_key") or ensure_proxy_api_key()
     api_key = cfg.get("api_key", "")
     redacted_key = "(set in the Open Assistant app)" if not api_key else f"{api_key[:4]}{'*' * (len(api_key) - 4)}"
     rows = [
@@ -102,10 +104,15 @@ async def status_page():
             font-family: inherit; transition: background 0.15s; }}
     .btn:hover {{ background: #2563eb; }}
     .btn:disabled {{ background: #93c5fd; cursor: default; }}
-    #test-result {{ margin-top: 10px; font-size: 0.82rem; padding: 8px 12px; border-radius: 6px;
+    .btn-sm {{ display: inline-block; padding: 2px 9px; background: #e2e8f0; color: #334155;
+               border: 1px solid #cbd5e1; border-radius: 5px; font-size: 0.78rem; cursor: pointer;
+               font-family: inherit; transition: background 0.15s; margin-left: 6px; }}
+    .btn-sm:hover {{ background: #cbd5e1; }}
+    .btn-sm:disabled {{ opacity: 0.5; cursor: default; }}
+    .test-result {{ margin-top: 10px; font-size: 0.82rem; padding: 8px 12px; border-radius: 6px;
                     display: none; word-break: break-all; }}
-    #test-result.ok {{ background: #dcfce7; color: #166534; border: 1px solid #86efac; }}
-    #test-result.err {{ background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }}
+    .test-result.ok {{ background: #dcfce7; color: #166534; border: 1px solid #86efac; }}
+    .test-result.err {{ background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }}
   </style>
 </head>
 <body>
@@ -123,8 +130,8 @@ async def status_page():
     </div>
     <div class="endpoint-row">
       <label>API Key</label>
-      <code>any-value</code>
-      <span style="color:#64748b;font-size:0.8rem;">(the proxy uses its own upstream key)</span>
+      <code id="proxy-key-display">{proxy_key}</code>
+      <button class="btn-sm" id="rotate-btn" onclick="rotateKey()" title="Generate a new proxy API key">&#x21bb; Rotate</button>
     </div>
     <div class="endpoint-row">
       <label>Model</label>
@@ -132,14 +139,18 @@ async def status_page():
     </div>
     <div class="hint">
       <strong>Claude Code:</strong>
-      <code>claude --openai-base-url {base_url} --openai-api-key any-value</code><br>
+      <code>claude --openai-base-url {base_url} --openai-api-key {proxy_key}</code><br>
       <br>
       <strong>Environment variables:</strong><br>
       <code>OPENAI_BASE_URL={base_url}</code><br>
-      <code>OPENAI_API_KEY=any-value</code>
+      <code>OPENAI_API_KEY={proxy_key}</code>
     </div>
-    <button class="btn" id="test-btn" onclick="testEndpoint()">Test endpoint through proxy</button>
-    <div id="test-result"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;">
+      <button class="btn" id="test-btn" onclick="testEndpoint()">Test endpoint through proxy</button>
+      <button class="btn" id="test-upstream-btn" style="background:#6366f1;" onclick="testUpstream()">Test upstream directly</button>
+    </div>
+    <div id="test-result" class="test-result"></div>
+    <div id="test-upstream-result" class="test-result"></div>
   </div>
 
   <div class="stats">
@@ -173,7 +184,7 @@ async def status_page():
       try {{
         const res = await fetch('/v1/chat/completions', {{
           method: 'POST',
-          headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer any-value' }},
+          headers: {{ 'Content-Type': 'application/json', 'Authorization': 'Bearer {proxy_key}' }},
           body: JSON.stringify({{
             model: '{upstream_model}',
             messages: [{{ role: 'user', content: 'Reply with just the word PONG.' }}],
@@ -186,15 +197,54 @@ async def status_page():
           throw new Error(data.detail || data.error?.message || 'HTTP ' + res.status);
         }}
         const text = data.choices?.[0]?.message?.content ?? JSON.stringify(data);
-        result.className = 'ok';
+        result.className = 'test-result ok';
         result.textContent = '\u2713 Upstream replied: ' + text.trim();
       }} catch (e) {{
-        result.className = 'err';
+        result.className = 'test-result err';
         result.textContent = '\u2717 ' + e.message;
       }} finally {{
         result.style.display = 'block';
         btn.disabled = false;
         btn.textContent = 'Test endpoint through proxy';
+      }}
+    }}
+    async function testUpstream() {{
+      const btn = document.getElementById('test-upstream-btn');
+      const result = document.getElementById('test-upstream-result');
+      btn.disabled = true;
+      btn.textContent = 'Testing\u2026';
+      result.style.display = 'none';
+      try {{
+        const res = await fetch('/test-upstream', {{ method: 'POST' }});
+        const data = await res.json();
+        if (data.ok) {{
+          result.className = 'test-result ok';
+          result.textContent = '\u2713 Upstream replied: ' + data.reply;
+        }} else {{
+          result.className = 'test-result err';
+          result.textContent = '\u2717 ' + data.error;
+        }}
+      }} catch (e) {{
+        result.className = 'test-result err';
+        result.textContent = '\u2717 ' + e.message;
+      }} finally {{
+        result.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = 'Test upstream directly';
+      }}
+    }}
+    async function rotateKey() {{
+      if (!confirm('Generate a new proxy API key? You will need to update all clients that use the current key.')) return;
+      const btn = document.getElementById('rotate-btn');
+      btn.disabled = true;
+      try {{
+        const res = await fetch('/rotate-proxy-key', {{ method: 'POST' }});
+        const data = await res.json();
+        document.getElementById('proxy-key-display').textContent = data.proxy_api_key;
+      }} catch (e) {{
+        alert('Failed to rotate key: ' + e.message);
+      }} finally {{
+        btn.disabled = false;
       }}
     }}
   </script>
@@ -277,7 +327,15 @@ async def upload_interaction(prompt_messages: list, assistant_response: str, mod
 async def proxy_completions(request: Request):
     global config
     config = load_config() # Reload config on each request in case it was changed
-    
+
+    # Validate proxy API key
+    proxy_api_key = config.get("proxy_api_key")
+    if proxy_api_key:
+        auth_header = request.headers.get("Authorization", "")
+        provided_key = auth_header.removeprefix("Bearer ").strip()
+        if provided_key != proxy_api_key:
+            raise HTTPException(status_code=401, detail="Invalid proxy API key")
+
     body = await request.json()
     messages = body.get("messages", [])
     model_requested = body.get("model", config["upstream_model"])
@@ -343,10 +401,17 @@ async def proxy_completions(request: Request):
             raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/v1/models")
-async def list_models():
+async def list_models(request: Request):
     global config
     config = load_config()
-    
+
+    proxy_api_key = config.get("proxy_api_key")
+    if proxy_api_key:
+        auth_header = request.headers.get("Authorization", "")
+        provided_key = auth_header.removeprefix("Bearer ").strip()
+        if provided_key != proxy_api_key:
+            raise HTTPException(status_code=401, detail="Invalid proxy API key")
+
     upstream_url = config["upstream_url"]
     base_url = upstream_url.replace("/chat/completions", "")
     models_url = base_url.rstrip("/") + "/models"
@@ -380,3 +445,39 @@ async def list_models():
         pass
         
     return {"object": "list", "data": [{"id": config["upstream_model"], "object": "model", "owned_by": "custom"}]}
+
+
+@app.post("/rotate-proxy-key")
+async def do_rotate_proxy_key():
+    new_key = rotate_proxy_api_key()
+    return {"proxy_api_key": new_key}
+
+
+@app.post("/test-upstream")
+async def test_upstream_direct():
+    cfg = load_config()
+    upstream_url = cfg["upstream_url"]
+    if not upstream_url.endswith("/chat/completions"):
+        upstream_url = upstream_url.rstrip("/") + "/chat/completions"
+
+    headers = {"Content-Type": "application/json"}
+    if cfg.get("upstream_key"):
+        headers["Authorization"] = f"Bearer {cfg['upstream_key']}"
+
+    body = {
+        "model": cfg["upstream_model"],
+        "messages": [{"role": "user", "content": "Reply with just the word PONG."}],
+        "max_tokens": 16,
+        "stream": False,
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.post(upstream_url, json=body, headers=headers, timeout=30.0)
+            if res.status_code != 200:
+                return {"ok": False, "error": f"HTTP {res.status_code}: {res.text[:400]}"}
+            data = res.json()
+            reply = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            return {"ok": True, "reply": reply.strip()}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
