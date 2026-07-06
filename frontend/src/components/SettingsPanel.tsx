@@ -3,7 +3,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { Server, Key, Brain, CheckCircle, HelpCircle, RefreshCw, Copy, Check, Trash2, Network, Code2, Download, Loader2, Trophy, Eye, EyeOff } from "lucide-react";
+import { Server, Key, Brain, CheckCircle, HelpCircle, RefreshCw, Copy, Check, Trash2, Network, Code2, Download, Loader2, Trophy, Eye, EyeOff, Terminal } from "lucide-react";
 import { LoginMethods } from "./LoginMethods";
 
 interface User {
@@ -252,6 +252,50 @@ export function SettingsPanel({ user, onUpdateUser }: SettingsPanelProps) {
   return (
     <div className="space-y-6 max-w-xl mx-auto">
     <LoginMethods user={user} onUpdateUser={onUpdateUser} />
+    
+    <Card className="bg-card/40 backdrop-blur-md border border-border/80 shadow-xl overflow-hidden animate-fade-in">
+      <CardHeader className="border-b border-border/50 bg-card/50">
+        <CardTitle className="flex items-center gap-2 text-xl font-bold">
+          <Terminal className="w-5 h-5 text-indigo-400" />
+          <span>Open Assistant Proxy CLI</span>
+        </CardTitle>
+        <CardDescription className="text-xs leading-relaxed mt-1">
+          Install and configure the local completions proxy on your machine to automatically redact PII on-device before donating traces.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-6 space-y-4">
+        <div className="space-y-3 font-mono text-[10px] leading-relaxed">
+          <div>
+            <span className="text-muted-foreground"># 1. Install package from the git repository branch</span>
+            <div className="text-foreground mt-1 p-1.5 rounded bg-black/40 border border-border/20 overflow-x-auto whitespace-pre-wrap select-all">
+              <code>uv pip install "git+https://github.com/LAION-AI/Open-Assistant-2.0.git@first-poc#subdirectory=pip-library"</code>
+            </div>
+          </div>
+          
+          <div>
+            <span className="text-muted-foreground"># 2. Configure proxy settings (paste your API key when prompted)</span>
+            <div className="text-foreground mt-1 p-1.5 rounded bg-black/40 border border-border/20">
+              <code>oa-proxy config</code>
+            </div>
+          </div>
+
+          <div>
+            <span className="text-muted-foreground"># 3. Setup the redactor model (tqdm setup progress)</span>
+            <div className="text-foreground mt-1 p-1.5 rounded bg-black/40 border border-border/20">
+              <code>oa-proxy setup</code>
+            </div>
+          </div>
+          
+          <div>
+            <span className="text-muted-foreground"># 4. Start local proxy on port 1010</span>
+            <div className="text-foreground mt-1 p-1.5 rounded bg-black/40 border border-border/20 font-sans">
+              <code className="font-mono">oa-proxy start</code>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+
     <Card className="bg-card/40 backdrop-blur-md border border-border/80 shadow-xl overflow-hidden">
       <CardHeader className="border-b border-border/50 bg-card/50">
         <CardTitle className="flex items-center gap-2 text-xl font-bold">
