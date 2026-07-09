@@ -1,0 +1,7 @@
+# Internal network — containers resolve each other by name (caddy →
+# frontend:3000, frontend → backend:8080), mirroring docker-compose.
+[Unit]
+Description=Open Assistant internal network
+
+[Network]
+NetworkName=open-assistant

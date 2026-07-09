@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"backend/db"
+	"backend/unified"
 
 	"github.com/google/uuid"
 )
@@ -78,10 +79,11 @@ func makeIngestHandler(repo db.LogRepository, creds *credStore) http.HandlerFunc
 
 		var payload struct {
 			Traces []struct {
-				Model          string           `json:"model"`
-				Platform       string           `json:"platform"`
-				ConversationID string           `json:"conversation_id"`
-				Messages       []map[string]any `json:"messages"`
+				Model          string                  `json:"model"`
+				Platform       string                  `json:"platform"`
+				ConversationID string                  `json:"conversation_id"`
+				Messages       []map[string]any        `json:"messages"`
+				Source         *unified.SourceEnvelope `json:"source"`
 			} `json:"traces"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -94,7 +96,7 @@ func makeIngestHandler(repo db.LogRepository, creds *credStore) http.HandlerFunc
 			if len(tr.Messages) == 0 {
 				continue
 			}
-			prompt, response, tokens := buildStoredPayload(tr.Model, tr.Messages)
+			prompt, response, tokens := unified.BuildStoredPayload(tr.Model, tr.Messages, unified.SanitizeSource(tr.Source))
 
 			platform := tr.Platform
 			if platform == "" {
@@ -127,81 +129,3 @@ func makeIngestHandler(repo db.LogRepository, creds *credStore) http.HandlerFunc
 	}
 }
 
-// buildStoredPayload mirrors the frontend's split of a normalized message list
-// into (prompt, response, tokens), so traces ingested directly by the backend
-// are stored identically to those that came through the Bun /api/traces/upload
-// path. The last assistant message becomes the response; everything before it
-// is the prompt history.
-func buildStoredPayload(model string, messages []map[string]any) (string, string, int) {
-	history := messages
-	finalAssistant := map[string]any{"role": "assistant", "content": ""}
-	if n := len(messages); n > 0 {
-		if role, _ := messages[n-1]["role"].(string); role == "assistant" {
-			finalAssistant = messages[n-1]
-			history = messages[:n-1]
-		}
-	}
-
-	apiHistory := make([]map[string]any, 0, len(history))
-	for _, m := range history {
-		role, _ := m["role"].(string)
-		switch role {
-		case "assistant":
-			e := map[string]any{"role": "assistant", "content": strOr(m["content"])}
-			if reasoning := strOr(m["reasoning"]); reasoning != "" {
-				e["reasoning_content"] = reasoning
-			}
-			if tc := m["tool_calls"]; tc != nil {
-				e["tool_calls"] = tc
-			}
-			apiHistory = append(apiHistory, e)
-		case "tool":
-			e := map[string]any{"role": "tool", "content": strOr(m["content"])}
-			if id := strOr(m["tool_call_id"]); id != "" {
-				e["tool_call_id"] = id
-			}
-			if name := strOr(m["name"]); name != "" {
-				e["name"] = name
-			}
-			apiHistory = append(apiHistory, e)
-		default:
-			if img := strOr(m["image"]); img != "" {
-				apiHistory = append(apiHistory, map[string]any{
-					"role": role,
-					"content": []any{
-						map[string]any{"type": "text", "text": strOr(m["content"])},
-						map[string]any{"type": "image_url", "image_url": map[string]any{"url": img}},
-					},
-				})
-			} else {
-				apiHistory = append(apiHistory, map[string]any{"role": role, "content": strOr(m["content"])})
-			}
-		}
-	}
-
-	if model == "" {
-		model = "trace"
-	}
-	promptBytes, _ := json.Marshal(map[string]any{"model": model, "messages": apiHistory})
-
-	respObj := map[string]any{
-		"role":              "assistant",
-		"content":           strOr(finalAssistant["content"]),
-		"reasoning_content": strOr(finalAssistant["reasoning"]),
-	}
-	if tc := finalAssistant["tool_calls"]; tc != nil {
-		respObj["tool_calls"] = tc
-	}
-	respBytes, _ := json.Marshal(respObj)
-
-	tokens := (len(promptBytes) + len(respBytes)) / 4
-	return string(promptBytes), string(respBytes), tokens
-}
-
-// strOr returns v as a string when it is one, else "".
-func strOr(v any) string {
-	if s, ok := v.(string); ok {
-		return s
-	}
-	return ""
-}

@@ -19,6 +19,26 @@ describe("platform categorization", () => {
   });
 });
 
+describe("source capture (lossless upload)", () => {
+  test("parseTrace keeps the original file byte-for-byte", () => {
+    // Deliberately odd formatting: extra spaces, trailing newline, a non-JSON
+    // line — none of it may be normalized away.
+    const raw =
+      '{ "message": { "role": "user",   "content": "hi" },  "uuid": "u-1" }\n' +
+      "corrupted line that is not json\n" +
+      '{"message":{"role":"assistant","content":"hello"}}\n';
+    const t = parseTrace("s.jsonl", "/x/.claude/p/s.jsonl", raw);
+    expect(t.ok).toBe(true);
+    expect(t.source).toEqual({ format: "claude-code", kind: "jsonl", name: "s.jsonl", text: raw });
+  });
+
+  test("whole-JSON files are marked kind=json; unreadable files carry no source", () => {
+    const raw = JSON.stringify({ model: "m", messages: [{ role: "user", content: "q" }] }, null, 2);
+    expect(parseTrace("t.json", "t.json", raw).source?.kind).toBe("json");
+    expect(parseTrace("empty.jsonl", "empty.jsonl", "").source).toBeUndefined();
+  });
+});
+
 describe("traceToConversation (preview)", () => {
   test("rebuilds a previewable conversation with reasoning + tools", () => {
     const t = parseTrace(

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"backend/db"
+	"backend/unified"
 )
 
 type ProxyHandler struct {
@@ -219,11 +220,34 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if chatReq.Stream {
-		handleStream(w, resp.Body, h.Repo, userId, conversationId, platform, string(bodyBytes))
-	} else {
-		handleNonStream(w, resp.Body, h.Repo, userId, conversationId, platform, string(bodyBytes))
+	// Log in the unified trace schema: normalized messages for querying, plus
+	// the exact wire request as the verbatim source (lossless back-conversion).
+	// The effective model (after any BYOE override) is what actually answered.
+	effectiveModel := chatReq.Model
+	if overrideModel != "" {
+		effectiveModel = overrideModel
 	}
+	promptJson, promptTokens := unifiedPrompt(effectiveModel, bodyBytes)
+
+	if chatReq.Stream {
+		handleStream(w, resp.Body, h.Repo, userId, conversationId, platform, promptJson, promptTokens)
+	} else {
+		handleNonStream(w, resp.Body, h.Repo, userId, conversationId, platform, promptJson, promptTokens)
+	}
+}
+
+// unifiedPrompt converts a chat-completions request body into the stored
+// unified prompt (see backend/unified). Falls back to logging the raw body
+// as-is when it can't be parsed.
+func unifiedPrompt(model string, bodyBytes []byte) (string, int) {
+	var raw struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(bodyBytes, &raw); err != nil || len(raw.Messages) == 0 {
+		return string(bodyBytes), len(bodyBytes) / 4
+	}
+	src := unified.SanitizeSource(&unified.SourceEnvelope{Format: "openai-chat", Kind: "json", Text: string(bodyBytes)})
+	return unified.PromptJSON(model, raw.Messages, src)
 }
 
 // buildUpstreamBody returns a request body for the model: reasoning_content is
@@ -252,7 +276,7 @@ func buildUpstreamBody(body []byte, overrideModel string) []byte {
 	return out
 }
 
-func handleStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, userId string, conversationId string, platform string, promptRawJson string) {
+func handleStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, userId string, conversationId string, platform string, promptJson string, promptTokens int) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		log.Println("ResponseWriter is not http.Flusher, fallback to basic writing")
@@ -359,8 +383,8 @@ func handleStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, 
 			return
 		}
 
-		// Token estimation (1 token per 4 chars)
-		promptTokens := len(promptRawJson) / 4
+		// Token estimation (1 token per 4 chars); promptTokens excludes the
+		// verbatim source copy.
 		completionTokens := (len(contentStr) + len(reasoningStr) + toolArgsLen) / 4
 		totalTokens := promptTokens + completionTokens
 
@@ -368,7 +392,7 @@ func handleStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, 
 			UserID:         userId,
 			ConversationID: conversationId,
 			Platform:       platform,
-			Prompt:         db.ToRawJSON([]byte(promptRawJson)),
+			Prompt:         db.ToRawJSON([]byte(promptJson)),
 			Response:       db.ToRawJSON(responseJsonBytes),
 			Tokens:         totalTokens,
 			CreatedAt:      time.Now().Unix(),
@@ -381,7 +405,7 @@ func handleStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, 
 	}()
 }
 
-func handleNonStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, userId string, conversationId string, platform string, promptRawJson string) {
+func handleNonStream(w http.ResponseWriter, body io.Reader, repo db.LogRepository, userId string, conversationId string, platform string, promptJson string, promptTokens int) {
 	respBytes, err := io.ReadAll(body)
 	if err != nil {
 		log.Printf("Error reading non-stream response: %v", err)
@@ -411,7 +435,6 @@ func handleNonStream(w http.ResponseWriter, body io.Reader, repo db.LogRepositor
 				return
 			}
 
-			promptTokens := len(promptRawJson) / 4
 			completionTokens := (len(msg.Content) + len(msg.ReasoningContent) + len(msg.ToolCalls)) / 4
 			totalTokens := promptTokens + completionTokens
 
@@ -419,7 +442,7 @@ func handleNonStream(w http.ResponseWriter, body io.Reader, repo db.LogRepositor
 				UserID:         userId,
 				ConversationID: conversationId,
 				Platform:       platform,
-				Prompt:         db.ToRawJSON([]byte(promptRawJson)),
+				Prompt:         db.ToRawJSON([]byte(promptJson)),
 				Response:       db.ToRawJSON(responseJsonBytes),
 				Tokens:         totalTokens,
 				CreatedAt:      time.Now().Unix(),

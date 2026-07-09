@@ -1,0 +1,6 @@
+# Builds the frontend image from the repo checkout (Podman >= 5.0).
+# On older Podman, delete the .build units and build manually instead:
+#   podman build -t localhost/open-assistant-frontend:latest /opt/open-assistant/frontend
+[Build]
+ImageTag=localhost/open-assistant-frontend:latest
+SetWorkingDirectory=/opt/open-assistant/frontend

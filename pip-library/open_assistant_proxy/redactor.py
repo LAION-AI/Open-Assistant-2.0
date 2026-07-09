@@ -223,6 +223,108 @@ def _redact_one(m: Dict[str, Any], classifier: Any, secret_scan: bool) -> Dict[s
     return out
 
 
+# --------------------------------------------------------------------------- #
+# Raw wire-request redaction
+#
+# Uploads can carry the exact provider request (the "source envelope", see
+# frontend/src/lib/unified.ts) so the capture is lossless and back-convertible
+# to the wire format. That verbatim copy must be scrubbed with the same rigor
+# as the normalized messages — otherwise redaction would be cosmetic.
+# --------------------------------------------------------------------------- #
+
+# String values under these keys are ids/enums/linkage that must survive
+# unchanged for the reconstructed request to stay machine-readable. Unlike the
+# web uploader, tool-call ``arguments`` are NOT exempt here: this proxy's
+# policy (see _redact_one) is to redact tool arguments, and the raw copy has
+# to match or it would leak what the normalized messages scrubbed.
+_STRUCTURAL_KEYS = frozenset({
+    "type", "role", "id", "uuid", "parentUuid", "leafUuid", "sessionId",
+    "requestId", "tool_call_id", "tool_use_id", "call_id", "model",
+    "timestamp", "version", "media_type", "mimeType", "kind", "format",
+    "schema",
+})
+
+_BASE64ISH = re.compile(r"[A-Za-z0-9+/=_\-]{512,}")
+
+
+def _skip_string(s: str) -> bool:
+    """True for strings that can't contain prose PII (data URIs, base64 blobs)
+    — NER on them is wasted work."""
+    if len(s) < 3:
+        return True
+    if s.startswith("data:") and ";base64," in s[:96]:
+        return True
+    return len(s) >= 512 and bool(_BASE64ISH.fullmatch(s))
+
+
+def redact_json_value(value: Any, classifier: Any, secret_scan: bool = True) -> Any:
+    """Recursively redact every non-structural string in a JSON value, keeping
+    the shape intact so the result re-serializes to a valid document."""
+    if isinstance(value, str):
+        return value if _skip_string(value) else redact_text(value, classifier, secret_scan)
+    if isinstance(value, list):
+        return [redact_json_value(v, classifier, secret_scan) for v in value]
+    if isinstance(value, dict):
+        return {
+            k: v if isinstance(v, str) and k in _STRUCTURAL_KEYS
+            else redact_json_value(v, classifier, secret_scan)
+            for k, v in value.items()
+        }
+    return value
+
+
+def _raw_fingerprint(value: Any) -> str:
+    # "raw:" prefix keeps these entries distinct from normalized-message
+    # fingerprints when both share one cache.
+    return "raw:" + hashlib.sha256(
+        json.dumps(value, sort_keys=True, ensure_ascii=True, default=str).encode()
+    ).hexdigest()
+
+
+def redact_wire_request(
+    body: Dict[str, Any],
+    classifier: Any,
+    secret_scan: bool = True,
+    cache: Optional[MutableMapping[str, Any]] = None,
+) -> Any:
+    """Deep-redact a raw provider request body (OpenAI chat/responses or
+    Anthropic messages shape).
+
+    Redaction units are fingerprint-cached like redact_messages: each element
+    of ``messages``/``input`` and the whole ``system``/``instructions`` value.
+    Agent clients replay the (growing) history plus a stable system prompt on
+    every turn, so later turns only pay to redact the newest messages — the
+    cache behavior that makes per-turn capture affordable.
+    """
+    if not isinstance(body, dict):
+        return redact_json_value(body, classifier, secret_scan)
+
+    def _cached(unit: Any) -> Any:
+        if cache is None:
+            return redact_json_value(unit, classifier, secret_scan)
+        fp = _raw_fingerprint(unit)
+        hit = cache.get(fp)
+        if hit is not None:
+            return hit
+        r = redact_json_value(unit, classifier, secret_scan)
+        cache[fp] = r
+        return r
+
+    out: Dict[str, Any] = {}
+    for k, v in body.items():
+        if k in ("messages", "input") and isinstance(v, list):
+            out[k] = [_cached(item) for item in v]
+        elif k in ("system", "instructions"):
+            out[k] = _cached(v)
+        elif isinstance(v, str) and k in _STRUCTURAL_KEYS:
+            # Top-level structural params (model, …) — same exemption the
+            # dict recursion applies.
+            out[k] = v
+        else:
+            out[k] = redact_json_value(v, classifier, secret_scan)
+    return out
+
+
 def redact_messages(
     messages: List[Dict[str, Any]],
     classifier: Any,

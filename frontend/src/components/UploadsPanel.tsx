@@ -17,7 +17,8 @@ import {
   type InteractionLog,
 } from "../lib/chat";
 import { PlatformBadge } from "./PlatformBadge";
-import { loadRedactor, redactMessages } from "../lib/redact";
+import { loadRedactor, redactMessages, redactSource } from "../lib/redact";
+import { sourceOf, sourceFileName } from "../lib/unified";
 import {
   Database,
   MessageSquare,
@@ -28,6 +29,7 @@ import {
   ChevronUp,
   RefreshCw,
   Trash2,
+  Download,
   AlertCircle,
   Loader2,
   Boxes,
@@ -77,21 +79,42 @@ export function UploadsPanel() {
     const messages = getMessages(conv.latest.prompt) || [];
     const responseParsed = parseJsonObject(conv.latest.response);
 
-    const history = messages.map((m: any) => ({
-      role: m.role || "user",
-      content: typeof m.content === "string" ? m.content : messageText(m.content),
-      reasoning: m.reasoning_content || m.reasoning || ""
-    }));
+    // 1:1 mapping (no dropping/splitting) so per-row slicing below stays
+    // aligned; tool linkage and images ride along so the redacted rewrite
+    // stays as lossless as the original unified row.
+    const history: any[] = messages.map((m: any) => {
+      const images = Array.isArray(m.images)
+        ? m.images
+        : Array.isArray(m.content)
+          ? m.content.map((p: any) => p?.image_url?.url).filter(Boolean)
+          : [];
+      return {
+        role: m.role || "user",
+        content: typeof m.content === "string" ? m.content : messageText(m.content),
+        reasoning: m.reasoning_content || m.reasoning || "",
+        ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
+        ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+        ...(m.name ? { name: m.name } : {}),
+        ...(images.length ? { images } : {}),
+      };
+    });
 
     if (responseParsed) {
       history.push({
         role: "assistant",
         content: responseParsed.content || "",
-        reasoning: responseParsed.reasoning_content || responseParsed.reasoning || ""
+        reasoning: responseParsed.reasoning_content || responseParsed.reasoning || "",
+        ...(responseParsed.tool_calls ? { tool_calls: responseParsed.tool_calls } : {}),
       });
     }
 
     const { messages: redactedHistory } = await redactMessages(history, classifier);
+
+    // The row may carry the original trace file verbatim — scrub it in the
+    // same pass and send it along; the server drops any stored source that
+    // isn't re-supplied, so unredacted text can't survive the rewrite.
+    const storedSource = sourceOf(conv.latest.prompt);
+    const redactedSource = storedSource ? (await redactSource(storedSource, classifier)).source : undefined;
 
     if (conv.conversationId) {
       const res = await fetch("/api/chat/redact", {
@@ -101,6 +124,7 @@ export function UploadsPanel() {
           conversationId: conv.conversationId,
           messages: redactedHistory,
           model: conv.model,
+          ...(redactedSource ? { source: redactedSource } : {}),
         }),
       });
       if (!res.ok) {
@@ -112,6 +136,8 @@ export function UploadsPanel() {
         const logMsgs = getMessages(log.prompt) || [];
         const logMsgCount = logMsgs.length;
         const subHistory = redactedHistory.slice(0, logMsgCount + 1);
+        const logSource = sourceOf(log.prompt);
+        const logRedactedSource = logSource ? (await redactSource(logSource, classifier)).source : undefined;
 
         const res = await fetch("/api/chat/redact", {
           method: "POST",
@@ -120,6 +146,7 @@ export function UploadsPanel() {
             logId: log.id,
             messages: subHistory,
             model: conv.model,
+            ...(logRedactedSource ? { source: logRedactedSource } : {}),
           }),
         });
         if (!res.ok) {
@@ -127,6 +154,20 @@ export function UploadsPanel() {
         }
       }
     }
+  };
+
+  // Reconstruct and download the original source-format file from a stored
+  // row (redacted if the row was redacted) — the back-conversion path.
+  const downloadSource = (conv: Conversation) => {
+    const source = sourceOf(conv.latest.prompt);
+    if (!source) return;
+    const blob = new Blob([source.text], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = sourceFileName(source);
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const redactConversation = async (conv: Conversation) => {
@@ -363,6 +404,15 @@ export function UploadsPanel() {
                           <Calendar className="w-3.5 h-3.5" />
                           <span>{formatTime(conv.updatedAt)}</span>
                         </div>
+                        {sourceOf(conv.latest.prompt) && (
+                          <button
+                            onClick={e => { e.stopPropagation(); downloadSource(conv); }}
+                            className="p-1.5 rounded-lg hover:bg-sky-500/10 hover:text-sky-400 transition-colors text-muted-foreground/60"
+                            title="Download original trace file (source format)"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
+                        )}
                         <button
                           onClick={e => { e.stopPropagation(); redactConversation(conv); }}
                           disabled={redacting === conv.id || isRedacted(conv)}

@@ -16,14 +16,29 @@ const CHUNK = 20;
 const TEXT_CAP = 8000;
 const PRE_CAP = 50000;
 
-function MessageContent({ content }: { content: any }) {
+function AttachedImage({ url }: { url: string }) {
+  return (
+    <div className="mt-1.5 max-w-[160px] rounded-lg overflow-hidden border border-border/60">
+      <img src={url} alt="Attached" className="w-full h-auto" />
+    </div>
+  );
+}
+
+// `images` holds unified-format attachments (content is a plain string there);
+// legacy rows instead embed images inside a multimodal content array.
+function MessageContent({ content, images }: { content: any; images?: string[] }) {
   if (typeof content === "string") {
     const long = content.length > TEXT_CAP;
     return (
-      <span className="whitespace-pre-wrap break-words">
-        {long ? content.slice(0, TEXT_CAP) : content}
-        {long && <span className="text-muted-foreground/50"> …(+{(content.length - TEXT_CAP).toLocaleString()} chars)</span>}
-      </span>
+      <>
+        <span className="whitespace-pre-wrap break-words">
+          {long ? content.slice(0, TEXT_CAP) : content}
+          {long && <span className="text-muted-foreground/50"> …(+{(content.length - TEXT_CAP).toLocaleString()} chars)</span>}
+        </span>
+        {(images || []).map((url, i) => (
+          <AttachedImage key={i} url={url} />
+        ))}
+      </>
     );
   }
   if (Array.isArray(content)) {
@@ -31,13 +46,7 @@ function MessageContent({ content }: { content: any }) {
       <div className="space-y-2">
         {content.map((part: any, i: number) => {
           if (part?.type === "text") return <MessageContent key={i} content={part.text} />;
-          if (part?.type === "image_url") {
-            return (
-              <div key={i} className="mt-1.5 max-w-[160px] rounded-lg overflow-hidden border border-border/60">
-                <img src={part.image_url?.url} alt="Attached" className="w-full h-auto" />
-              </div>
-            );
-          }
+          if (part?.type === "image_url") return <AttachedImage key={i} url={part.image_url?.url} />;
           return null;
         })}
       </div>
@@ -117,7 +126,7 @@ export function ConversationThread({ conv }: { conv: Conversation }) {
                   Turn {turn.userTurn}
                 </div>
                 <div className="max-w-[85%] px-3.5 py-2.5 rounded-2xl rounded-br-md bg-indigo-600/20 border border-indigo-500/25 text-foreground/90 text-[11.5px]">
-                  <MessageContent content={turn.user.content} />
+                  <MessageContent content={turn.user.content} images={turn.user.images} />
                 </div>
               </div>
             )}

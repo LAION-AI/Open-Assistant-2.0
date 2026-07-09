@@ -17,7 +17,7 @@ from .config import (
     ensure_proxy_api_key,
     rotate_proxy_api_key,
 )
-from .redactor import load_classifier, redact_messages
+from .redactor import load_classifier, redact_messages, redact_wire_request
 from .adapters import ADAPTERS
 
 # How long to wait on the upstream. Streaming (agentic/reasoning) turns can run
@@ -28,8 +28,21 @@ NONSTREAM_TIMEOUT = httpx.Timeout(120.0, connect=15.0)
 # Bound on the async upload queue; if the model can't keep up we drop rather
 # than grow memory without limit.
 UPLOAD_QUEUE_MAX = 200
-# Per-message redaction cache (fingerprint -> redacted message).
+# Per-message redaction cache (fingerprint -> redacted message / raw unit).
 MSG_CACHE_MAX = 4000
+
+# Verbatim source copies larger than this are dropped (the server enforces the
+# same cap; see MaxSourceBytes in backend/unified).
+MAX_SOURCE_BYTES = 20 * 1024 * 1024
+
+# Wire format each proxied endpoint speaks — recorded on the source envelope so
+# the stored trace says exactly what the reconstructed request is.
+SOURCE_FORMATS = {
+    "/v1/chat/completions": "openai-chat",
+    "/v1beta/chat/completions": "openai-chat",
+    "/v1/responses": "openai-responses",
+    "/v1/messages": "anthropic-messages",
+}
 
 classifier = None
 
@@ -172,11 +185,12 @@ def _conversation_id(messages: list) -> str:
 # Background upload worker
 # --------------------------------------------------------------------------- #
 
-def _enqueue(request_messages: list, assistant: dict, model: str) -> None:
+def _enqueue(request_messages: list, assistant: dict, model: str,
+             raw_body: "dict | None" = None, source_format: str = "") -> None:
     if _upload_queue is None:
         return
     try:
-        _upload_queue.put_nowait((request_messages, assistant, model))
+        _upload_queue.put_nowait((request_messages, assistant, model, raw_body, source_format))
     except asyncio.QueueFull:
         stats["dropped"] += 1
         print("Upload queue full; dropping interaction.")
@@ -195,7 +209,7 @@ async def _upload_worker() -> None:
 
 async def _process_job(job) -> None:
     global classifier
-    request_messages, assistant, model = job
+    request_messages, assistant, model, raw_body, source_format = job
 
     if not (assistant and (assistant.get("content") or assistant.get("tool_calls"))):
         return  # nothing meaningful to store
@@ -221,9 +235,24 @@ async def _process_job(job) -> None:
     except Exception as e:
         _record_upload(False, f"redaction failed: {e}")
         return
+
+    # Lossless source envelope: the exact wire request, deep-redacted with the
+    # same fingerprint cache (later turns only pay for the newest messages).
+    # Never uploaded unredacted — on any failure we upload without it.
+    source = None
+    if raw_body is not None and load_config_cached().get("upload_raw_source", True):
+        try:
+            redacted_raw = await asyncio.to_thread(
+                redact_wire_request, raw_body, classifier, True, _msg_cache
+            )
+            text = json.dumps(redacted_raw, ensure_ascii=False)
+            if len(text.encode("utf-8")) <= MAX_SOURCE_BYTES:
+                source = {"format": source_format or "openai-chat", "kind": "json", "text": text}
+        except Exception as e:
+            print(f"Raw source redaction failed; uploading without source: {e}")
     _trim_cache()
 
-    await _upload_trace(redacted, model, conversation_id)
+    await _upload_trace(redacted, model, conversation_id, source)
 
 
 def _trim_cache() -> None:
@@ -239,7 +268,8 @@ def _record_upload(ok: bool, detail: str) -> None:
     _recent_uploads.appendleft({"ok": ok, "detail": detail, "ts": time.time()})
 
 
-async def _upload_trace(redacted_messages: list, model: str, conversation_id: str) -> None:
+async def _upload_trace(redacted_messages: list, model: str, conversation_id: str,
+                        source: "dict | None" = None) -> None:
     cfg = load_config_cached()
     api_key = cfg.get("api_key")
     if not api_key:
@@ -250,16 +280,15 @@ async def _upload_trace(redacted_messages: list, model: str, conversation_id: st
     server_url = cfg.get("server_url", "https://oa.laion.ai/").rstrip("/")
     ingest_path = cfg.get("ingest_path", "/proxy/api/ingest")
     upload_url = f"{server_url}{ingest_path}"
-    payload = {
-        "traces": [
-            {
-                "model": model,
-                "platform": "pip-library",
-                "conversation_id": conversation_id,
-                "messages": redacted_messages,
-            }
-        ]
+    trace = {
+        "model": model,
+        "platform": "pip-library",
+        "conversation_id": conversation_id,
+        "messages": redacted_messages,
     }
+    if source:
+        trace["source"] = source
+    payload = {"traces": [trace]}
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
 
     try:
@@ -336,7 +365,7 @@ async def _proxy(request: Request, path: str):
                 return
             finally:
                 await client.aclose()
-            _enqueue(request_messages, collector.finish(), model)
+            _enqueue(request_messages, collector.finish(), model, body, SOURCE_FORMATS.get(path, "openai-chat"))
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
@@ -351,7 +380,7 @@ async def _proxy(request: Request, path: str):
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
     data = response.json()
-    _enqueue(request_messages, adapter.parse_response(data), model)
+    _enqueue(request_messages, adapter.parse_response(data), model, body, SOURCE_FORMATS.get(path, "openai-chat"))
     return JSONResponse(content=data)
 
 

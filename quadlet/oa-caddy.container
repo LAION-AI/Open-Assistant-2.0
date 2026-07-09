@@ -1,0 +1,25 @@
+# Caddy — TLS termination (Let's Encrypt) and routing: /proxy/api/ingest goes
+# straight to the backend, everything else to the frontend. Mirrors the `caddy`
+# service in docker-compose.yml.
+[Unit]
+Description=Open Assistant Caddy edge
+Wants=oa-frontend.service
+After=oa-frontend.service
+
+[Container]
+Image=docker.io/library/caddy:2-alpine
+ContainerName=caddy
+Network=open-assistant.network
+PublishPort=80:80
+PublishPort=443:443
+# Supplies DOMAIN and ACME_EMAIL to the Caddyfile.
+EnvironmentFile=/opt/open-assistant/.env
+Volume=/opt/open-assistant/Caddyfile:/etc/caddy/Caddyfile:ro,z
+Volume=/opt/open-assistant/data/caddy/data:/data:z
+Volume=/opt/open-assistant/data/caddy/config:/config:z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target

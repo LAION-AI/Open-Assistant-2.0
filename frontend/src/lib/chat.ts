@@ -387,15 +387,19 @@ export function conversationTitle(conv: Conversation): string {
   return text || "New chat";
 }
 
-/** Pull display text and any attached image out of a message's content. */
-function extractUserContent(content: any): { text: string; image?: string } {
-  if (typeof content === "string") return { text: content };
+/** Pull display text and any attached image out of a message. Unified rows keep
+ * content as a plain string with images in `images`; legacy rows embed them as
+ * multimodal content arrays. */
+function extractUserContent(msg: any): { text: string; image?: string } {
+  const content = msg?.content;
+  const unifiedImage = Array.isArray(msg?.images) ? msg.images[0] : undefined;
+  if (typeof content === "string") return { text: content, image: unifiedImage };
   if (Array.isArray(content)) {
     const text = content.find((p: any) => p?.type === "text")?.text ?? "";
-    const image = content.find((p: any) => p?.type === "image_url")?.image_url?.url;
+    const image = content.find((p: any) => p?.type === "image_url")?.image_url?.url ?? unifiedImage;
     return { text, image };
   }
-  return { text: messageText(content) };
+  return { text: messageText(content), image: unifiedImage };
 }
 
 /**
@@ -407,7 +411,7 @@ export function conversationToMessages(conv: Conversation): ReconstructedMessage
   const out: ReconstructedMessage[] = [];
   for (const turn of turns) {
     if (turn.user) {
-      const { text, image } = extractUserContent(turn.user.content);
+      const { text, image } = extractUserContent(turn.user);
       out.push({ role: "user", content: text, image });
     }
     if (turn.assistant) {

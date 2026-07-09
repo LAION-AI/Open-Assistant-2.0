@@ -35,6 +35,19 @@ Redaction covers message content, reasoning, **tool-call arguments** and **tool
 results**. It runs off the request path in a background worker, so proxied
 requests are never blocked by model inference.
 
+## Lossless source capture
+
+Each upload also carries the **exact wire request** (as a "source envelope"),
+so the stored trace can be converted back to the original provider format —
+nothing is lost in normalization. The raw copy is deep-redacted on-device with
+the same two layers before upload: every prose string is scrubbed (structural
+fields like ids, roles and model names are preserved so the reconstructed
+request stays machine-readable), and redaction is fingerprint-cached per
+message, so multi-turn sessions only pay to redact the newest turns.
+
+To upload only the normalized, redacted messages instead, set
+`"upload_raw_source": false` in `~/.open_assistant/config.json`.
+
 ## Installation
 
 ```bash

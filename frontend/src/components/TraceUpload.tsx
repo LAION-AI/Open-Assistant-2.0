@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { ConversationThread } from "./ConversationThread";
 import { PlatformBadge } from "./PlatformBadge";
 import { parseTrace, traceToConversation, type ParsedTrace } from "../lib/traces";
-import { loadRedactor, redactMessages } from "../lib/redact";
+import { loadRedactor, redactMessages, redactSource } from "../lib/redact";
 import {
   Upload,
   FolderOpen,
@@ -261,11 +261,15 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
   const selected = entries.filter(e => e.selected);
   const redactBusy = redactState === "loading" || redactState === "running";
 
-  // Load the model and redact the given entries on-device. Only message text +
-  // reasoning are touched (never tool_call arguments), so stored JSON stays valid.
-  // Returns id -> redacted messages so callers can use fresh results immediately.
-  const redactEntries = async (targets: Entry[]): Promise<Map<string, any[]>> => {
-    const result = new Map<string, any[]>();
+  // Load the model and redact the given entries on-device: message text +
+  // reasoning, plus the verbatim source copy (parse-aware, so it stays a valid
+  // file of the same format). Tool_call arguments are never touched, so stored
+  // JSON stays valid. Returns id -> redacted trace parts so callers can use
+  // fresh results immediately.
+  const redactEntries = async (
+    targets: Entry[],
+  ): Promise<Map<string, { messages: any[]; source?: ParsedTrace["source"] }>> => {
+    const result = new Map<string, { messages: any[]; source?: ParsedTrace["source"] }>();
     if (targets.length === 0) return result;
 
     setRedactState("loading");
@@ -292,10 +296,21 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
       setRedactStatus(`Redacting conversation ${i + 1} / ${targets.length}…`);
       try {
         const { messages, count } = await redactMessages(e.trace.messages as any, classifier);
-        total += count;
-        result.set(e.id, messages);
+        let source = e.trace.source;
+        let count2 = 0;
+        if (source) {
+          // The verbatim original must be scrubbed too, or the redaction above
+          // would be cosmetic.
+          const r = await redactSource(source, classifier);
+          source = r.source;
+          count2 = r.count;
+        }
+        total += count + count2;
+        result.set(e.id, { messages, source });
         setEntries(prev =>
-          prev.map(x => (x.id === e.id ? { ...x, trace: { ...x.trace, messages }, redactions: count } : x)),
+          prev.map(x =>
+            x.id === e.id ? { ...x, trace: { ...x.trace, messages, source }, redactions: count + count2 } : x,
+          ),
         );
       } catch {
         setEntries(prev => prev.map(x => (x.id === e.id ? { ...x, redactions: x.redactions ?? 0 } : x)));
@@ -324,7 +339,7 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
     setResult(null);
     try {
       // Redact (on-device) any selected, not-yet-redacted conversations first.
-      let redacted = new Map<string, any[]>();
+      let redacted = new Map<string, { messages: any[]; source?: ParsedTrace["source"] }>();
       if (autoRedact) {
         const pending = selected.filter(e => e.redactions == null);
         if (pending.length > 0) {
@@ -345,7 +360,8 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
           traces: selected.map(e => ({
             platform: e.trace.platform,
             model: e.trace.model,
-            messages: redacted.get(e.id) || e.trace.messages,
+            messages: redacted.get(e.id)?.messages || e.trace.messages,
+            source: redacted.get(e.id)?.source ?? e.trace.source,
           })),
         }),
       });

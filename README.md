@@ -135,6 +135,13 @@ bun dev
 
 The dev server starts at `http://localhost:3000` with hot module reloading.
 
+### Production deployment
+
+Two equivalent options, both running Caddy (automatic HTTPS) → frontend → backend with all state bind-mounted under `./data`:
+
+- **Docker Compose** — `docker compose up -d --build` (see [`docker-compose.yml`](docker-compose.yml), configured via `.env` + `frontend.env`).
+- **Podman quadlets** — systemd-native units in [`quadlet/`](quadlet/README.md); same layout and env files, managed with `systemctl`.
+
 ---
 
 ## Roadmap

@@ -1,0 +1,24 @@
+# Open Assistant backend (Go) — owns logs.db (interaction logs, feedback).
+# Mirrors the `backend` service in docker-compose.yml.
+[Unit]
+Description=Open Assistant backend
+Wants=oa-backend-build.service
+After=oa-backend-build.service
+
+[Container]
+Image=localhost/open-assistant-backend:latest
+ContainerName=backend
+Network=open-assistant.network
+Environment=PORT=8080
+Environment=DB_PATH=/data/logs.db
+# Read-only credential lookup for /api/ingest (frontend stays the single
+# writer of user.db).
+Environment=CRED_DB_PATH=/creds/user.db
+Volume=/opt/open-assistant/data/backend:/data:z
+Volume=/opt/open-assistant/data/frontend:/creds:ro,z
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target default.target

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { applyRedaction, placeholderFor, chunkText, redactMessages } from "./redact";
+import { applyRedaction, placeholderFor, chunkText, redactMessages, redactSource } from "./redact";
 
 describe("placeholderFor", () => {
   test("normalizes entity groups", () => {
@@ -72,5 +72,51 @@ describe("redactMessages", () => {
     expect(count).toBe(2);
     expect(messages[0].content).toBe("Hi I am [REDACTED_PERSON]");
     expect(messages[1].reasoning).toBe("user [REDACTED_PERSON] greeted me");
+  });
+});
+
+describe("redactSource", () => {
+  // Fake classifier flagging every "Bob" occurrence as a person.
+  const classifier = async (t: string) => {
+    const out: any[] = [];
+    let i = t.indexOf("Bob");
+    while (i !== -1) {
+      out.push({ entity_group: "private_person", start: i, end: i + 3 });
+      i = t.indexOf("Bob", i + 3);
+    }
+    return out;
+  };
+
+  test("scrubs JSONL records while keeping structure machine-readable", async () => {
+    const jsonl = [
+      JSON.stringify({ sessionId: "s-Bob-1", type: "user", cwd: "/Users/Bob", message: { role: "user", content: "Hi I am Bob" }, uuid: "u1" }),
+      "plain line naming Bob",
+      JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Hello Bob" }] } }),
+    ].join("\n");
+
+    const { source, count } = await redactSource({ format: "claude-code", kind: "jsonl", text: jsonl }, classifier);
+    expect(count).toBeGreaterThanOrEqual(4);
+
+    const lines = source.text.split("\n");
+    const rec0 = JSON.parse(lines[0]!);
+    // structural fields untouched (ids/enums must survive for back-conversion)
+    expect(rec0.sessionId).toBe("s-Bob-1");
+    expect(rec0.type).toBe("user");
+    expect(rec0.uuid).toBe("u1");
+    // prose values scrubbed — including ones outside the normalized messages
+    expect(rec0.cwd).toBe("/Users/[REDACTED_PERSON]");
+    expect(rec0.message.content).toBe("Hi I am [REDACTED_PERSON]");
+    expect(lines[1]).toBe("plain line naming [REDACTED_PERSON]");
+    expect(JSON.parse(lines[2]!).message.content[0].text).toBe("Hello [REDACTED_PERSON]");
+  });
+
+  test("skips data URIs and keeps whole-JSON sources parseable", async () => {
+    const doc = { model: "m", messages: [{ role: "user", content: "Bob here", image: "data:image/png;base64,Qm9i" }] };
+    const { source } = await redactSource({ format: "vscode", kind: "json", text: JSON.stringify(doc) }, classifier);
+    const back = JSON.parse(source.text);
+    expect(back.messages[0].content).toBe("[REDACTED_PERSON] here");
+    // base64 payload untouched (no prose PII, and NER on blobs is wasted work)
+    expect(back.messages[0].image).toBe("data:image/png;base64,Qm9i");
+    expect(back.model).toBe("m");
   });
 });

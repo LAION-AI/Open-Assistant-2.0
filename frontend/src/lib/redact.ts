@@ -129,3 +129,102 @@ export async function redactMessages(
   }
   return { messages: out, count };
 }
+
+// --- Source-envelope redaction ------------------------------------------------
+// Uploads can carry the original trace file verbatim (see lib/unified.ts
+// SourceEnvelope) for lossless back-conversion. When the user redacts, that
+// copy must be scrubbed too — otherwise the redaction would be cosmetic.
+
+/**
+ * Structural keys whose values must stay intact for the source file to remain
+ * machine-readable after back-conversion (ids, enums, linkage). `arguments` is
+ * skipped because it holds a nested JSON *string* — a placeholder spliced into
+ * it could corrupt the inner JSON (matches redactMessages, which also leaves
+ * tool arguments untouched).
+ */
+const STRUCTURAL_KEYS = new Set([
+  "type", "role", "id", "uuid", "parentUuid", "leafUuid", "sessionId", "requestId",
+  "tool_call_id", "tool_use_id", "call_id", "model", "timestamp", "version",
+  "media_type", "mimeType", "kind", "format", "schema", "arguments",
+]);
+
+/** True for strings that can't contain prose PII (data URIs, base64/hash blobs). */
+function skipString(s: string): boolean {
+  if (s.length < 3) return true;
+  if (/^data:[\w/+.-]+;base64,/.test(s)) return true;
+  return s.length >= 512 && /^[A-Za-z0-9+/=_-]+$/.test(s);
+}
+
+/** Recursively redact every non-structural string value in a JSON value. */
+async function redactDeep(value: any, classifier: any): Promise<{ value: any; count: number }> {
+  if (typeof value === "string") {
+    if (skipString(value)) return { value, count: 0 };
+    const r = await redactText(value, classifier);
+    return { value: r.text, count: r.count };
+  }
+  if (Array.isArray(value)) {
+    let count = 0;
+    const out: any[] = [];
+    for (const v of value) {
+      const r = await redactDeep(v, classifier);
+      out.push(r.value);
+      count += r.count;
+    }
+    return { value: out, count };
+  }
+  if (value && typeof value === "object") {
+    let count = 0;
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (typeof v === "string" && STRUCTURAL_KEYS.has(k)) {
+        out[k] = v;
+        continue;
+      }
+      const r = await redactDeep(v, classifier);
+      out[k] = r.value;
+      count += r.count;
+    }
+    return { value: out, count };
+  }
+  return { value, count: 0 };
+}
+
+/**
+ * Redact a verbatim source envelope, parse-aware so the result stays a valid
+ * file of the same format: JSONL line-by-line, JSON as one document. Redacted
+ * records are re-serialized (compact), so byte-identity is intentionally traded
+ * for scrubbed text — an unredacted upload keeps the source byte-for-byte.
+ */
+export async function redactSource<T extends { kind: string; text: string }>(
+  source: T,
+  classifier: any,
+): Promise<{ source: T; count: number }> {
+  let count = 0;
+  if (source.kind === "json") {
+    try {
+      const parsed = JSON.parse(source.text);
+      const r = await redactDeep(parsed, classifier);
+      return { source: { ...source, text: JSON.stringify(r.value) }, count: r.count };
+    } catch {
+      const r = await redactText(source.text, classifier);
+      return { source: { ...source, text: r.text }, count: r.count };
+    }
+  }
+  const lines: string[] = [];
+  for (const line of source.text.split("\n")) {
+    if (!line.trim()) {
+      lines.push(line);
+      continue;
+    }
+    try {
+      const r = await redactDeep(JSON.parse(line), classifier);
+      lines.push(JSON.stringify(r.value));
+      count += r.count;
+    } catch {
+      const r = await redactText(line, classifier);
+      lines.push(r.text);
+      count += r.count;
+    }
+  }
+  return { source: { ...source, text: lines.join("\n") }, count };
+}

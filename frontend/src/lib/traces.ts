@@ -3,12 +3,17 @@
 // free of React/DOM so it can be unit-tested with `bun test`.
 
 import { groupConversations, type Conversation, type InteractionLog } from "./chat";
+import { toStored, type SourceEnvelope } from "./unified";
 
 export interface TraceMessage {
-  role: "user" | "assistant" | "system" | string;
+  role: "user" | "assistant" | "system" | "tool" | string;
   content: string;
   reasoning?: string;
   tool_calls?: any[];
+  /** tool role: linkage back to the originating tool call. */
+  tool_call_id?: string;
+  /** tool role: name of the tool that ran. */
+  name?: string;
 }
 
 export interface ParsedTrace {
@@ -19,6 +24,9 @@ export interface ParsedTrace {
   messages: TraceMessage[];
   turnCount: number;
   title: string;
+  /** The original file, verbatim — stored alongside the normalized messages so
+   * the source format can be reconstructed exactly. */
+  source?: SourceEnvelope;
   error?: string;
 }
 
@@ -96,6 +104,7 @@ function parseCodexRollout(text: string): { model: string; messages: TraceMessag
         content: "",
         tool_calls: [
           {
+            ...(typeof p.call_id === "string" && p.call_id ? { id: p.call_id } : {}),
             type: "function",
             function: {
               name: p.name || "tool",
@@ -104,18 +113,25 @@ function parseCodexRollout(text: string): { model: string; messages: TraceMessag
           },
         ],
       });
+    } else if (p.type === "function_call_output") {
+      // Tool output — kept as a tool-role message with its call linkage.
+      const output = typeof p.output === "string" ? p.output : JSON.stringify(p.output ?? "");
+      const tm: TraceMessage = { role: "tool", content: output };
+      if (typeof p.call_id === "string" && p.call_id) tm.tool_call_id = p.call_id;
+      messages.push(tm);
     }
   }
   return { model, messages };
 }
 
-/** Flatten a message's content (string or block array) into text/reasoning/tools. */
-function flattenContent(content: any): { text: string; reasoning: string; tools: any[] } {
-  if (typeof content === "string") return { text: content, reasoning: "", tools: [] };
+/** Flatten a message's content (string or block array) into text/reasoning/tools/results. */
+function flattenContent(content: any): { text: string; reasoning: string; tools: any[]; results: TraceMessage[] } {
+  if (typeof content === "string") return { text: content, reasoning: "", tools: [], results: [] };
   if (Array.isArray(content)) {
     let text = "";
     let reasoning = "";
     const tools: any[] = [];
+    const results: TraceMessage[] = [];
     for (const b of content) {
       if (!b || typeof b !== "object") continue;
       if ((b.type === "text" || b.type === "output_text") && typeof b.text === "string") {
@@ -125,19 +141,25 @@ function flattenContent(content: any): { text: string; reasoning: string; tools:
       } else if (b.type === "tool_use" || b.type === "tool_call") {
         const args = b.input ?? b.arguments ?? {};
         tools.push({
-          id: b.id,
+          ...(typeof b.id === "string" && b.id ? { id: b.id } : {}),
           type: "function",
           function: { name: b.name || b.tool || "tool", arguments: typeof args === "string" ? args : JSON.stringify(args) },
         });
       } else if (b.type === "tool_result") {
+        // Kept as a proper tool-role message (with linkage) rather than being
+        // flattened into text, so the stored trace stays back-convertible.
         const r = typeof b.content === "string" ? b.content : JSON.stringify(b.content ?? "");
-        text += (text ? "\n" : "") + `↳ tool result: ${r}`;
+        const tm: TraceMessage = { role: "tool", content: r };
+        const id = b.tool_use_id ?? b.tool_call_id;
+        if (typeof id === "string" && id) tm.tool_call_id = id;
+        if (typeof b.name === "string" && b.name) tm.name = b.name;
+        results.push(tm);
       }
     }
-    return { text, reasoning, tools };
+    return { text, reasoning, tools, results };
   }
-  if (content == null) return { text: "", reasoning: "", tools: [] };
-  return { text: typeof content === "object" ? JSON.stringify(content) : String(content), reasoning: "", tools: [] };
+  if (content == null) return { text: "", reasoning: "", tools: [], results: [] };
+  return { text: typeof content === "object" ? JSON.stringify(content) : String(content), reasoning: "", tools: [], results: [] };
 }
 
 /** Extract assistant text + tool calls from a VS Code chat `response` array. */
@@ -184,12 +206,20 @@ function parseVscChat(whole: any): { model: string; messages: TraceMessage[] } {
   return { model, messages };
 }
 
-function toMessage(role: string, content: any): TraceMessage {
-  const { text, reasoning, tools } = flattenContent(content);
+/**
+ * Convert one entry into messages: the host message plus any tool-result
+ * messages that were embedded in its content blocks (Claude Code stores tool
+ * results inside user-role entries).
+ */
+function toMessages(role: string, content: any): TraceMessage[] {
+  const { text, reasoning, tools, results } = flattenContent(content);
   const m: TraceMessage = { role, content: text };
   if (reasoning) m.reasoning = reasoning;
   if (tools.length) m.tool_calls = tools;
-  return m;
+  const out: TraceMessage[] = [];
+  if (text || reasoning || tools.length) out.push(m);
+  out.push(...results);
+  return out;
 }
 
 /** Extract a {role, content} message from one parsed JSONL entry, if present. */
@@ -234,12 +264,12 @@ export function parseTrace(fileName: string, path: string, text: string): Parsed
     model = typeof whole.model === "string" ? whole.model : "";
     for (const m of whole.messages) {
       const mm = messageFromEntry(m);
-      if (mm) messages.push(toMessage(mm.role, mm.content));
+      if (mm) messages.push(...toMessages(mm.role, mm.content));
     }
   } else if (Array.isArray(whole)) {
     for (const m of whole) {
       const mm = messageFromEntry(m);
-      if (mm) messages.push(toMessage(mm.role, mm.content));
+      if (mm) messages.push(...toMessages(mm.role, mm.content));
     }
   } else if (looksLikeCodex(trimmed)) {
     // OpenAI Codex CLI rollout.
@@ -262,12 +292,15 @@ export function parseTrace(fileName: string, path: string, text: string): Parsed
         if (typeof mdl === "string") model = mdl;
       }
       const mm = messageFromEntry(obj);
-      if (mm) messages.push(toMessage(mm.role, mm.content));
+      if (mm) messages.push(...toMessages(mm.role, mm.content));
     }
   }
 
   const filtered = messages.filter(
-    m => (m.role === "user" || m.role === "assistant" || m.role === "system") && (m.content || m.tool_calls?.length || m.reasoning),
+    m =>
+      m.role === "tool" ||
+      ((m.role === "user" || m.role === "assistant" || m.role === "system") &&
+        (m.content || m.tool_calls?.length || m.reasoning)),
   );
   // Prefer the first "real" user prompt — skip injected context wrappers like
   // <environment_context> (Codex) so titles are meaningful.
@@ -278,6 +311,13 @@ export function parseTrace(fileName: string, path: string, text: string): Parsed
   const turnCount = Math.max(filtered.filter(m => m.role === "user").length, 1);
   const ok = filtered.length > 0;
 
+  // Keep the original file verbatim (byte-for-byte) so the upload is lossless
+  // and back-convertible to the source format. `whole` parsed => a single JSON
+  // document; anything else is (treated as) JSONL.
+  const source: SourceEnvelope | undefined = ok
+    ? { format: platform, kind: whole !== null ? "json" : "jsonl", name: fileName, text }
+    : undefined;
+
   return {
     ok,
     fileName,
@@ -286,6 +326,7 @@ export function parseTrace(fileName: string, path: string, text: string): Parsed
     messages: filtered,
     turnCount,
     title,
+    source,
     error: ok ? undefined : "No conversation messages found",
   };
 }
@@ -295,26 +336,16 @@ export function parseTrace(fileName: string, path: string, text: string): Parsed
  * the same renderer used for stored conversations — without uploading it.
  */
 export function traceToConversation(trace: ParsedTrace): Conversation {
-  const messages = trace.messages;
-  let history = messages.slice();
-  let finalAssistant: any = { role: "assistant", content: "" };
-  const lastMsg = messages[messages.length - 1];
-  if (messages.length && lastMsg && lastMsg.role === "assistant") {
-    finalAssistant = lastMsg;
-    history = messages.slice(0, -1);
-  }
+  // Same conversion the upload path stores, so the preview is exactly what
+  // would land in the database.
+  const { prompt, response } = toStored(trace.model, trace.messages, trace.source);
   const log: InteractionLog = {
     id: 0,
     userId: "",
     conversationId: "preview",
     platform: trace.platform,
-    prompt: { model: trace.model || "trace", messages: history },
-    response: {
-      role: "assistant",
-      content: finalAssistant.content || "",
-      reasoning_content: finalAssistant.reasoning || "",
-      ...(finalAssistant.tool_calls ? { tool_calls: finalAssistant.tool_calls } : {}),
-    },
+    prompt,
+    response,
     tokens: 0,
     createdAt: Math.floor(Date.now() / 1000),
   };

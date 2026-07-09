@@ -18,7 +18,11 @@ DEFAULT_CONFIG = {
     "upstream_key": "",
     "upstream_model": "gpt-4o",
     "port": 2048,
-    "host": "127.0.0.1"
+    "host": "127.0.0.1",
+    # Attach the exact wire request (deep-redacted on-device) to each upload as
+    # a lossless "source envelope". Set false to upload only the normalized,
+    # redacted messages.
+    "upload_raw_source": True,
 }
 
 def load_config() -> Dict[str, Any]:

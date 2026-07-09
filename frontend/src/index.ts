@@ -23,6 +23,7 @@ import {
   verifyEmailActionToken,
 } from "./lib/session";
 import { parseCookies, serializeCookie } from "./lib/cookies";
+import { buildStoredPayload, type SourceEnvelope } from "./lib/unified";
 import { emailEnabled, sendVerificationEmail, sendPasswordResetEmail } from "./lib/email";
 import indexHtml from "./index.html";
 
@@ -199,55 +200,26 @@ async function resolveModelList(byoeUrl: string, byoeKey?: string | null): Promi
   }
 }
 
-// Reconstruct the stored {prompt, response, tokens} for a conversation from a
-// flat message list (history in prompt, last assistant as response) — shared by
-// trace ingest and redaction so they store identically.
-function buildStoredPayload(model: string, messages: any[]): { prompt: string; response: string; tokens: number } {
-  let history = messages;
-  let finalAssistant: any = { role: "assistant", content: "" };
-  if (messages.length && messages[messages.length - 1]?.role === "assistant") {
-    finalAssistant = messages[messages.length - 1];
-    history = messages.slice(0, -1);
-  }
-  const apiHistory = history.map((m: any) => {
-    if (m.role === "assistant") {
-      return {
-        role: "assistant",
-        content: m.content || "",
-        ...(m.reasoning ? { reasoning_content: m.reasoning } : {}),
-        ...(m.tool_calls ? { tool_calls: m.tool_calls } : {}),
-      };
-    }
-    // Tool results (from agent tool use) carry their linkage so the stored
-    // transcript stays coherent across multi-step tool conversations.
-    if (m.role === "tool") {
-      return {
-        role: "tool",
-        content: m.content || "",
-        ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
-        ...(m.name ? { name: m.name } : {}),
-      };
-    }
-    if (m.image) {
-      return {
-        role: m.role,
-        content: [
-          { type: "text", text: m.content || "" },
-          { type: "image_url", image_url: { url: m.image } },
-        ],
-      };
-    }
-    return { role: m.role, content: m.content || "" };
-  });
-  const prompt = JSON.stringify({ model: model || "trace", messages: apiHistory });
-  const response = JSON.stringify({
-    role: "assistant",
-    content: finalAssistant.content || "",
-    reasoning_content: finalAssistant.reasoning || "",
-    ...(finalAssistant.tool_calls ? { tool_calls: finalAssistant.tool_calls } : {}),
-  });
-  const tokens = Math.floor((prompt.length + response.length) / 4);
-  return { prompt, response, tokens };
+// The stored {prompt, response, tokens} conversion lives in lib/unified.ts —
+// every upload path (trace ingest, redaction, backend /api/ingest) normalizes
+// to the same unified schema so rows are reproducible and back-convertible
+// regardless of source. The prompt can carry a verbatim copy of the original
+// trace file (SourceEnvelope) for lossless back-conversion to the source format.
+
+// Original trace files are already capped client-side at 10 MB; this server
+// cap only guards against hand-crafted requests.
+const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
+
+/** Validate a client-supplied source envelope; null when absent or malformed. */
+function sanitizeSource(s: any): SourceEnvelope | null {
+  if (!s || typeof s !== "object" || typeof s.text !== "string" || !s.text) return null;
+  if (s.text.length > MAX_SOURCE_BYTES) return null;
+  return {
+    format: String(s.format || "trace").slice(0, 40),
+    kind: s.kind === "json" ? "json" : "jsonl",
+    ...(typeof s.name === "string" && s.name ? { name: s.name.slice(0, 200) } : {}),
+    text: s.text,
+  };
 }
 
 // Parse an OpenCode SQLite database (newer versions store sessions in
@@ -265,6 +237,10 @@ function parseOpencodeDb(dbPath: string): any[] {
         .all(s.id) as any[];
 
       const messages: any[] = [];
+      // Raw session/message/part rows, kept as JSONL alongside the normalized
+      // messages so the OpenCode records are fully reconstructable (source is
+      // a SQLite DB, so fidelity is per-row JSON rather than byte-for-byte).
+      const sourceLines: string[] = [JSON.stringify({ table: "session", row: s })];
       for (const m of msgRows) {
         let md: any = {};
         try {
@@ -274,6 +250,7 @@ function parseOpencodeDb(dbPath: string): any[] {
           .query("SELECT data FROM part WHERE message_id = ? ORDER BY time_created ASC")
           .all(m.id) as any[];
 
+        const parts: any[] = [];
         let text = "";
         let reasoning = "";
         const tools: any[] = [];
@@ -281,16 +258,21 @@ function parseOpencodeDb(dbPath: string): any[] {
           let pd: any = {};
           try {
             pd = JSON.parse(p.data);
-          } catch {}
+          } catch {
+            pd = { raw: p.data };
+          }
+          parts.push(pd);
           if (pd.type === "text" && pd.text) text += (text ? "\n" : "") + pd.text;
           else if (pd.type === "reasoning" && pd.text) reasoning += (reasoning ? "\n" : "") + pd.text;
           else if (pd.type === "tool") {
             tools.push({
+              ...(pd.callID ? { id: pd.callID } : {}),
               type: "function",
               function: { name: pd.tool || "tool", arguments: JSON.stringify(pd.state?.input ?? {}) },
             });
           }
         }
+        sourceLines.push(JSON.stringify({ table: "message", id: m.id, data: md, parts }));
         const msg: any = { role: md.role || "user", content: text };
         if (reasoning) msg.reasoning = reasoning;
         if (tools.length) msg.tool_calls = tools;
@@ -307,7 +289,16 @@ function parseOpencodeDb(dbPath: string): any[] {
       const firstUser = filtered.find(m => m.role === "user");
       const title = (s.title || firstUser?.content || "OpenCode session").toString().slice(0, 80);
       const turnCount = Math.max(filtered.filter(m => m.role === "user").length, 1);
-      traces.push({ ok: true, fileName: s.id, platform: "opencode", model, messages: filtered, turnCount, title });
+      traces.push({
+        ok: true,
+        fileName: s.id,
+        platform: "opencode",
+        model,
+        messages: filtered,
+        turnCount,
+        title,
+        source: { format: "opencode", kind: "jsonl", name: `${s.id}.jsonl`, text: sourceLines.join("\n") },
+      });
     }
     return traces;
   } finally {
@@ -1500,7 +1491,7 @@ const server = serve({
           const messages: any[] = Array.isArray(tr?.messages) ? tr.messages : [];
           if (messages.length === 0) continue;
 
-          const { prompt, response, tokens } = buildStoredPayload(tr.model, messages);
+          const { prompt, response, tokens } = buildStoredPayload(tr.model, messages, sanitizeSource(tr.source));
 
           // Mark uploads with a `trace:` prefix so they're distinguishable from
           // live V1-proxy sessions of the same tool (e.g. trace:claude-code).
@@ -1636,7 +1627,10 @@ const server = serve({
           return Response.json({ error: "conversationId or logId, and messages required" }, { status: 400 });
         }
 
-        const { prompt, response, tokens } = buildStoredPayload(body?.model || "", messages);
+        // The client sends the source envelope back *redacted*. When it is
+        // absent the rewritten row deliberately carries no source — preserving
+        // the stored one would resurrect unredacted text.
+        const { prompt, response, tokens } = buildStoredPayload(body?.model || "", messages, sanitizeSource(body?.source));
         const res = await fetch(`${BACKEND_URL}/api/logs/update`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
