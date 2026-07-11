@@ -48,6 +48,75 @@ message, so multi-turn sessions only pay to redact the newest turns.
 To upload only the normalized, redacted messages instead, set
 `"upload_raw_source": false` in `~/.open_assistant/config.json`.
 
+## Agent setup: Claude Code & Codex
+
+Both agents work through the proxy — including "yolo" (no-approval) mode —
+with the quirks from the
+[Unsloth Claude Code](https://unsloth.ai/docs/basics/claude-code) and
+[Codex](https://unsloth.ai/docs/basics/codex) guides handled for you.
+
+### Claude Code (Anthropic Messages API)
+
+Claude Code speaks the Anthropic API, so point `ANTHROPIC_BASE_URL` at the
+proxy **without** a `/v1` suffix (Claude Code appends `/v1/messages` itself):
+
+```bash
+export ANTHROPIC_BASE_URL="http://localhost:2048"
+export ANTHROPIC_AUTH_TOKEN="<your proxy_api_key>"   # shown on the dashboard
+export ANTHROPIC_API_KEY=""                          # so no cloud-key prompt
+claude                                                # add --dangerously-skip-permissions for yolo mode
+```
+
+**KV-cache quirk (90% slower local inference), handled proxy-side:** Claude
+Code prepends an `x-anthropic-billing-header: …` line to the system prompt
+whose value changes on *every* request, which invalidates the upstream KV
+cache each turn — and would also defeat this proxy's per-message redaction
+cache. The proxy strips that line before forwarding and capture (even for
+older Claude Code builds that ignore `CLAUDE_CODE_ATTRIBUTION_HEADER=0`).
+Setting the env var too is still good practice:
+
+```bash
+claude --settings '{"env":{"CLAUDE_CODE_ATTRIBUTION_HEADER":"0"}}'
+```
+
+For extra cache reuse on local models, launch with
+`--bare --exclude-dynamic-system-prompt-sections` (smaller, stabler prompt
+prefix). To opt out of the proxy-side strip, set
+`"strip_attribution_header": false` in `~/.open_assistant/config.json`.
+
+### Codex (OpenAI Responses API)
+
+Codex now uses the Responses API **exclusively** (`wire_api = "chat"` is
+rejected). The proxy captures `/v1/responses` natively — including reasoning
+summaries, `function_call` and `custom_tool_call`/`apply_patch` items. In
+`~/.codex/config.toml`:
+
+```toml
+[model_providers.open_assistant]
+name                 = "Open Assistant proxy"
+base_url             = "http://localhost:2048/v1"
+env_key              = "OPEN_ASSISTANT_PROXY_KEY"
+wire_api             = "responses"
+requires_openai_auth = false     # skips the "Sign in with ChatGPT" screen
+
+[profiles.open_assistant]
+model_provider = "open_assistant"
+model          = "<model id from GET http://localhost:2048/v1/models>"
+```
+
+```bash
+export OPEN_ASSISTANT_PROXY_KEY="<your proxy_api_key>"
+codex --profile open_assistant       # add --dangerously-bypass-approvals-and-sandbox for yolo mode
+```
+
+A `Model metadata for … not found` warning for non-OpenAI model ids is
+harmless; silence it with `model_context_window = 131072` (your model's real
+context size) at the top of `config.toml`.
+
+Both endpoints are forwarded to your configured `upstream_url` as-is, so the
+upstream must actually serve them — recent `llama-server` builds serve
+`/v1/messages` and `/v1/responses` alongside `/v1/chat/completions`.
+
 ## Installation
 
 ```bash

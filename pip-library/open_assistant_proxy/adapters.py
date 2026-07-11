@@ -212,6 +212,17 @@ class ResponsesAdapter:
         if instr:
             out.append({"role": "system", "content": _stringify(instr)})
         inp = body.get("input")
+        # Codex replays `reasoning` items (summary is plain text; full content
+        # is encrypted) before the assistant turn they belong to — buffer the
+        # summary and attach it to the next assistant message.
+        pending_reasoning: List[str] = []
+
+        def _attach_reasoning(msg: Dict[str, Any]) -> Dict[str, Any]:
+            if pending_reasoning and msg.get("role") == "assistant":
+                msg["reasoning"] = "\n".join(pending_reasoning)
+                pending_reasoning.clear()
+            return msg
+
         if isinstance(inp, str):
             out.append({"role": "user", "content": inp})
         elif isinstance(inp, list):
@@ -222,14 +233,19 @@ class ResponsesAdapter:
                 typ = item.get("type", "message")
                 if typ == "message" or "role" in item:
                     text, _ = _text_and_images(item.get("content"))
-                    out.append({"role": item.get("role", "user"), "content": text})
-                elif typ == "function_call":
-                    out.append(_assistant("", "", [{
+                    out.append(_attach_reasoning({"role": item.get("role", "user"), "content": text}))
+                elif typ == "reasoning":
+                    for s in item.get("summary") or []:
+                        if isinstance(s, dict) and s.get("text"):
+                            pending_reasoning.append(s["text"])
+                elif typ in ("function_call", "custom_tool_call"):
+                    args = item.get("arguments") if typ == "function_call" else item.get("input")
+                    out.append(_attach_reasoning(_assistant("", "", [{
                         "id": item.get("call_id") or item.get("id", ""),
                         "type": "function",
-                        "function": {"name": item.get("name", ""), "arguments": item.get("arguments", "") or ""},
-                    }]))
-                elif typ == "function_call_output":
+                        "function": {"name": item.get("name", ""), "arguments": _stringify(args)},
+                    }])))
+                elif typ in ("function_call_output", "custom_tool_call_output"):
                     out.append({"role": "tool", "tool_call_id": item.get("call_id", ""),
                                 "content": _stringify(item.get("output"))})
         return out
@@ -248,11 +264,12 @@ class ResponsesAdapter:
                 for s in item.get("summary") or []:
                     if isinstance(s, dict) and s.get("text"):
                         reasoning.append(s["text"])
-            elif typ == "function_call":
+            elif typ in ("function_call", "custom_tool_call"):
+                args = item.get("arguments") if typ == "function_call" else item.get("input")
                 tools.append({
                     "id": item.get("call_id") or item.get("id", ""),
                     "type": "function",
-                    "function": {"name": item.get("name", ""), "arguments": item.get("arguments", "") or ""},
+                    "function": {"name": item.get("name", ""), "arguments": _stringify(args)},
                 })
         if not content and isinstance(data.get("output_text"), str):
             content.append(data["output_text"])
@@ -276,7 +293,7 @@ class _ResponsesStreamCollector:
             self.text.append(ev.get("delta", "") or "")
         elif t in ("response.reasoning_summary_text.delta", "response.reasoning_text.delta"):
             self.reasoning.append(ev.get("delta", "") or "")
-        elif t == "response.function_call_arguments.delta":
+        elif t in ("response.function_call_arguments.delta", "response.custom_tool_call_input.delta"):
             idx = ev.get("output_index", 0)
             a = self.tools.setdefault(idx, {"id": "", "name": "", "args": []})
             if idx not in self.order:
@@ -284,7 +301,7 @@ class _ResponsesStreamCollector:
             a["args"].append(ev.get("delta", "") or "")
         elif t == "response.output_item.added":
             item = ev.get("item") or {}
-            if item.get("type") == "function_call":
+            if item.get("type") in ("function_call", "custom_tool_call"):
                 idx = ev.get("output_index", 0)
                 a = self.tools.setdefault(idx, {"id": "", "name": "", "args": []})
                 if idx not in self.order:
@@ -326,13 +343,17 @@ class MessagesAdapter:
             if isinstance(content, str):
                 out.append({"role": role, "content": content})
                 continue
-            text, tools, tool_results = [], [], []
+            text, reasoning, tools, tool_results = [], [], [], []
             for b in content or []:
                 if not isinstance(b, dict):
                     continue
                 bt = b.get("type")
                 if bt == "text":
                     text.append(b.get("text", ""))
+                elif bt == "thinking":
+                    # Claude Code replays prior assistant turns with their
+                    # thinking blocks — keep them, don't drop the reasoning.
+                    reasoning.append(b.get("thinking", ""))
                 elif bt == "tool_use":
                     tools.append({
                         "id": b.get("id", ""), "type": "function",
@@ -344,8 +365,10 @@ class MessagesAdapter:
                                          "content": _stringify(b.get("content"))})
                 elif bt in ("image",):
                     text.append("[image omitted]")
-            if text or tools:
+            if text or reasoning or tools:
                 nm: Dict[str, Any] = {"role": role, "content": "\n".join(t for t in text if t)}
+                if reasoning:
+                    nm["reasoning"] = "\n".join(r for r in reasoning if r)
                 if tools:
                     nm["tool_calls"] = tools
                 out.append(nm)

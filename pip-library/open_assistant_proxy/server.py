@@ -44,6 +44,47 @@ SOURCE_FORMATS = {
     "/v1/messages": "anthropic-messages",
 }
 
+# Claude Code prepends an attribution line to the very start of the system
+# prompt whose value changes on EVERY request. That poisons the whole prompt
+# prefix: the upstream KV cache misses each turn (~90% slower on local models,
+# see unsloth.ai/docs/basics/claude-code) and our own per-message redaction
+# fingerprint cache re-runs NER over the huge system prompt every turn.
+# Stripping it here fixes both at once — including for older Claude Code
+# builds that ignore CLAUDE_CODE_ATTRIBUTION_HEADER=0.
+_ATTRIBUTION_LINE = re.compile(r"^\s*x-anthropic-billing-header:[^\n]*\n?")
+
+
+def _strip_attribution_text(text: str) -> str:
+    return _ATTRIBUTION_LINE.sub("", text, count=1)
+
+
+def strip_volatile_lines(body: dict) -> dict:
+    """Remove per-request volatile attribution lines from the system prompt
+    (Anthropic `system` — string or block list — and OpenAI chat `system`/
+    `developer` messages). Mutates and returns `body`."""
+    system = body.get("system")
+    if isinstance(system, str):
+        body["system"] = _strip_attribution_text(system)
+    elif isinstance(system, list):
+        for block in system:
+            if isinstance(block, dict) and isinstance(block.get("text"), str):
+                block["text"] = _strip_attribution_text(block["text"])
+                break  # the line is only ever prepended to the first block
+
+    for m in body.get("messages") or []:
+        if not isinstance(m, dict) or m.get("role") not in ("system", "developer"):
+            continue
+        content = m.get("content")
+        if isinstance(content, str):
+            m["content"] = _strip_attribution_text(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and isinstance(block.get("text"), str):
+                    block["text"] = _strip_attribution_text(block["text"])
+                    break
+        break  # only the leading system message carries it
+    return body
+
 classifier = None
 
 # Runtime stats surfaced on the dashboard.
@@ -332,6 +373,12 @@ async def _proxy(request: Request, path: str):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
+    # Strip Claude Code's per-request attribution line BEFORE forwarding and
+    # capture: the upstream regains KV-cache reuse and our redaction cache
+    # stays hot across turns. Set "strip_attribution_header": false to opt out.
+    if cfg.get("strip_attribution_header", True):
+        body = strip_volatile_lines(body)
+
     model = body.get("model", cfg.get("upstream_model", ""))
     upstream_url = upstream_url_for(cfg.get("upstream_url", ""), path)
     headers = _build_upstream_headers(adapter, cfg, request.headers)
@@ -587,9 +634,20 @@ async def status_page():
     </div>
     <div class="endpoint-row"><label>Model</label><code>{upstream_model}</code></div>
     <div class="hint">
-      <strong>Claude Code:</strong>
-      <code>claude --openai-base-url {base_url} --openai-api-key {proxy_key}</code><br><br>
-      <strong>Environment variables:</strong><br>
+      <strong>Claude Code</strong> (Anthropic API — no /v1 suffix; the proxy strips the KV-cache-poisoning attribution line for you):<br>
+      <code>ANTHROPIC_BASE_URL=http://{host}:{port} ANTHROPIC_AUTH_TOKEN={proxy_key} ANTHROPIC_API_KEY= claude</code><br><br>
+      <strong>Codex</strong> (~/.codex/config.toml — Codex speaks the Responses API exclusively):<br>
+      <code>[model_providers.open_assistant]<br>
+      base_url = "{base_url}"<br>
+      env_key = "OPEN_ASSISTANT_PROXY_KEY"<br>
+      wire_api = "responses"<br>
+      requires_openai_auth = false<br>
+      <br>
+      [profiles.open_assistant]<br>
+      model_provider = "open_assistant"<br>
+      model = "{upstream_model}"</code><br>
+      then <code>export OPEN_ASSISTANT_PROXY_KEY={proxy_key}</code> and launch <code>codex --profile open_assistant</code><br><br>
+      <strong>OpenAI-compatible tools:</strong><br>
       <code>OPENAI_BASE_URL={base_url}</code><br>
       <code>OPENAI_API_KEY={proxy_key}</code>
     </div>

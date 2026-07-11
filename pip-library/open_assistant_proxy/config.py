@@ -23,6 +23,11 @@ DEFAULT_CONFIG = {
     # a lossless "source envelope". Set false to upload only the normalized,
     # redacted messages.
     "upload_raw_source": True,
+    # Strip Claude Code's per-request "x-anthropic-billing-header" attribution
+    # line from the system prompt before forwarding/capture. It changes every
+    # request and would otherwise invalidate the upstream KV cache each turn
+    # (~90% slower local inference) as well as this proxy's redaction cache.
+    "strip_attribution_header": True,
 }
 
 def load_config() -> Dict[str, Any]:

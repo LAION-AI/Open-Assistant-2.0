@@ -3,9 +3,11 @@ import sys
 import json
 import hashlib
 from typing import Any, Dict, List, MutableMapping, Optional
-import torch
-from transformers import pipeline
-from huggingface_hub import snapshot_download
+
+# torch / transformers are imported lazily inside the loader functions: they
+# take seconds to import and aren't needed until redaction actually runs, so
+# the proxy starts fast and lightweight hosts can run (and test) everything
+# except model inference without ML dependencies installed.
 
 MODEL_ID = "openai/privacy-filter"
 
@@ -69,6 +71,8 @@ def _as_text(value: Any) -> str:
         return str(value)
 
 def get_device() -> str:
+    import torch  # lazy: heavy import, only needed for inference
+
     if torch.cuda.is_available():
         return "cuda"
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
@@ -77,6 +81,8 @@ def get_device() -> str:
 
 def setup_model() -> None:
     """Downloads the redactor model showing tqdm progress bar."""
+    from huggingface_hub import snapshot_download  # lazy
+
     print("Initializing Open Assistant on-device redactor model setup...")
     try:
         # snapshot_download uses tqdm under the hood to show progress bar;
@@ -89,6 +95,8 @@ def setup_model() -> None:
 
 def load_classifier() -> Any:
     """Loads the Hugging Face token-classification pipeline on the fastest device."""
+    from transformers import pipeline  # lazy: heavy import
+
     device = get_device()
     print(f"Loading redactor model on device: {device}...")
     try:
