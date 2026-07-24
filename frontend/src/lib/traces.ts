@@ -33,6 +33,7 @@ export interface ParsedTrace {
 /** Guess which tool produced a trace from its path/name and content hints. */
 export function detectTracePlatform(pathOrName: string, text: string): string {
   const p = pathOrName.toLowerCase();
+  if (p.includes("command-code") || p.includes("command_code")) return "command-code";
   if (p.includes(".claude") || p.includes("claude-code") || p.includes("claude_code")) return "claude-code";
   if (p.includes(".codex") || /(^|\/)rollout-/.test(p)) return "codex";
   if (p.includes("copilot") || p.includes("vscode") || p.includes("vs-code") || p.includes("chatsessions")) return "vscode";
@@ -40,10 +41,57 @@ export function detectTracePlatform(pathOrName: string, text: string): string {
   if (p.includes("opencode")) return "opencode";
   if (p.includes(".openclaw") || p.includes("openclaw")) return "openclaw";
   if (p.includes(".hermes") || p.includes("hermes")) return "hermes";
+  if (p.includes("/agent/sessions/") || p.includes("pi-pods") || p.includes("/.pi/")) return "pi";
+  if (p.includes("crush")) return "crush";
   // Content hints.
   if (/"type"\s*:\s*"response_item"|"turn_context"|"session_meta"/.test(text)) return "codex";
-  if (/"sessionId"|"cwd"|"toolUseResult"|"requestId"/.test(text)) return "claude-code";
+  if (/"thinking_level_change"|"type"\s*:\s*"model_change"/.test(text)) return "pi";
+  if (/"sessionId"[\s\S]{0,400}?"message"/.test(text.slice(0, 4000))) return "claude-code";
+  if (/"sessionId"/.test(text) && /"role"\s*:/.test(text)) return "command-code";
+  if (/"cwd"|"toolUseResult"|"requestId"/.test(text)) return "claude-code";
   return "trace";
+}
+
+/** True for pi agent session JSONL ({type:"session"} header + message events). */
+function looksLikePi(text: string): boolean {
+  const first = text.split("\n").find(l => l.trim());
+  if (!first) return false;
+  try {
+    const o = JSON.parse(first);
+    return o && typeof o === "object" && o.type === "session" && ("cwd" in o || "version" in o);
+  } catch {
+    return false;
+  }
+}
+
+/** Parse a pi agent session: session/model_change headers, then message events
+ * (tool results are whole messages with role=toolResult). */
+function parsePiSession(text: string): { model: string; messages: TraceMessage[] } {
+  let model = "";
+  const messages: TraceMessage[] = [];
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    if (!t) continue;
+    let o: any;
+    try {
+      o = JSON.parse(t);
+    } catch {
+      continue;
+    }
+    if (o?.type === "model_change" && o.modelId && !model) model = o.modelId;
+    if (o?.type !== "message" || !o.message || typeof o.message !== "object") continue;
+    const msg = o.message;
+    if (msg.role === "toolResult") {
+      const { text: out } = flattenContent(msg.content);
+      const tm: TraceMessage = { role: "tool", content: out };
+      if (msg.toolCallId) tm.tool_call_id = msg.toolCallId;
+      if (msg.toolName) tm.name = msg.toolName;
+      messages.push(tm);
+      continue;
+    }
+    if (typeof msg.role === "string") messages.push(...toMessages(msg.role, msg.content));
+  }
+  return { model, messages };
 }
 
 /** True for OpenAI Codex CLI rollout JSONL (`{timestamp,type,payload}` events). */
@@ -138,21 +186,31 @@ function flattenContent(content: any): { text: string; reasoning: string; tools:
         text += (text ? "\n" : "") + b.text;
       } else if (b.type === "thinking" && typeof b.thinking === "string") {
         reasoning += (reasoning ? "\n" : "") + b.thinking;
-      } else if (b.type === "tool_use" || b.type === "tool_call") {
+      } else if (b.type === "tool_use" || b.type === "tool_call" || b.type === "toolCall" || b.type === "tool-call") {
+        // Claude Code: tool_use{id,name,input}; pi: toolCall{id,name,arguments};
+        // command-code: tool-call{toolCallId,toolName,input}.
         const args = b.input ?? b.arguments ?? {};
+        const id = b.id ?? b.toolCallId;
         tools.push({
-          ...(typeof b.id === "string" && b.id ? { id: b.id } : {}),
+          ...(typeof id === "string" && id ? { id } : {}),
           type: "function",
-          function: { name: b.name || b.tool || "tool", arguments: typeof args === "string" ? args : JSON.stringify(args) },
+          function: {
+            name: b.name || b.toolName || b.tool || "tool",
+            arguments: typeof args === "string" ? args : JSON.stringify(args),
+          },
         });
-      } else if (b.type === "tool_result") {
+      } else if (b.type === "tool_result" || b.type === "tool-result" || b.type === "toolResult") {
         // Kept as a proper tool-role message (with linkage) rather than being
         // flattened into text, so the stored trace stays back-convertible.
-        const r = typeof b.content === "string" ? b.content : JSON.stringify(b.content ?? "");
+        // command-code wraps the payload as output:{type,value}.
+        let out = b.content ?? b.output;
+        if (out && typeof out === "object" && !Array.isArray(out) && "value" in out) out = out.value;
+        const r = typeof out === "string" ? out : JSON.stringify(out ?? "");
         const tm: TraceMessage = { role: "tool", content: r };
-        const id = b.tool_use_id ?? b.tool_call_id;
+        const id = b.tool_use_id ?? b.toolCallId ?? b.tool_call_id;
         if (typeof id === "string" && id) tm.tool_call_id = id;
-        if (typeof b.name === "string" && b.name) tm.name = b.name;
+        const name = b.toolName ?? b.name;
+        if (typeof name === "string" && name) tm.name = name;
         results.push(tm);
       }
     }
@@ -276,6 +334,11 @@ export function parseTrace(fileName: string, path: string, text: string): Parsed
     const codex = parseCodexRollout(trimmed);
     model = codex.model;
     messages.push(...codex.messages);
+  } else if (looksLikePi(trimmed)) {
+    // pi agent session.
+    const pi = parsePiSession(trimmed);
+    model = pi.model;
+    messages.push(...pi.messages);
   } else {
     // JSONL — one JSON object per line.
     for (const line of trimmed.split("\n")) {

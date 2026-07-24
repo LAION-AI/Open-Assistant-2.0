@@ -24,6 +24,7 @@ import {
 } from "./lib/session";
 import { parseCookies, serializeCookie } from "./lib/cookies";
 import { buildStoredPayload, type SourceEnvelope } from "./lib/unified";
+import { parseCrushDb, parseHermesDb } from "./lib/tracedb";
 import { emailEnabled, sendVerificationEmail, sendPasswordResetEmail } from "./lib/email";
 import indexHtml from "./index.html";
 
@@ -209,6 +210,16 @@ async function resolveModelList(byoeUrl: string, byoeKey?: string | null): Promi
 // Original trace files are already capped client-side at 10 MB; this server
 // cap only guards against hand-crafted requests.
 const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
+
+/** Deterministic conversation id for an uploaded trace, anchored on the
+ * verbatim source when present (falls back to the messages). Re-uploading the
+ * same session upserts one row; a redacted re-upload gets a new id, which is
+ * the safe direction. */
+function stableTraceId(platform: string, tr: any): string {
+  const seed =
+    typeof tr?.source?.text === "string" && tr.source.text ? tr.source.text : JSON.stringify(tr?.messages ?? []);
+  return "import-" + createHash("sha256").update(`${platform}:${seed}`).digest("hex").slice(0, 24);
+}
 
 /** Validate a client-supplied source envelope; null when absent or malformed. */
 function sanitizeSource(s: any): SourceEnvelope | null {
@@ -420,6 +431,19 @@ function parseSqliteDb(dbPath: string): any[] {
   }
   if (tables.includes("session") && tables.includes("message") && tables.includes("part")) return parseOpencodeDb(dbPath);
   if (tables.includes("steps") && tables.includes("trajectory_meta")) return parseAntigravityDb(dbPath);
+  if (tables.includes("sessions") && tables.includes("messages")) {
+    // Crush stores block "parts" per message; Hermes uses near-OpenAI columns.
+    let cols: string[] = [];
+    try {
+      const db = new Database(dbPath, { readwrite: true });
+      cols = (db.query("PRAGMA table_info(messages)").all() as any[]).map((r: any) => r.name);
+      db.close();
+    } catch {
+      return [];
+    }
+    if (cols.includes("parts")) return parseCrushDb(dbPath);
+    if (cols.includes("tool_calls")) return parseHermesDb(dbPath);
+  }
   return [];
 }
 
@@ -1506,8 +1530,11 @@ const server = serve({
 
           // A stable conversation id (e.g. from the pip proxy) lets the backend
           // upsert multi-turn sessions into one row instead of one per turn.
-          // Fall back to a fresh id for one-shot uploads without an id.
-          const conversationId = tr.conversation_id ? String(tr.conversation_id).slice(0, 128) : crypto.randomUUID();
+          // Without one, derive it from the trace content so re-uploading the
+          // same session updates the existing row instead of duplicating it.
+          const conversationId = tr.conversation_id
+            ? String(tr.conversation_id).slice(0, 128)
+            : stableTraceId(platform, tr);
 
           const res = await fetch(`${BACKEND_URL}/api/log-interaction`, {
             method: "POST",

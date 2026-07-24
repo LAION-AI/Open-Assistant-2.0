@@ -48,6 +48,39 @@ message, so multi-turn sessions only pay to redact the newest turns.
 To upload only the normalized, redacted messages instead, set
 `"upload_raw_source": false` in `~/.open_assistant/config.json`.
 
+## Upload saved sessions: `oa-proxy upload`
+
+Besides live capture, the CLI can parse and upload sessions the agents already
+saved to disk:
+
+```bash
+# Preview what would be uploaded (nothing leaves the machine)
+oa-proxy upload --dry-run ~/.claude/projects ~/.codex/sessions
+
+# Redact on-device, then upload
+oa-proxy upload ~/.pi/agent/sessions myproject/.crush/crush.db ~/.hermes/state.db
+```
+
+Understood formats (files or whole folders; noise like `node_modules` and
+config files is skipped automatically):
+
+| Agent | Location |
+|---|---|
+| Claude Code | `~/.claude/projects/**/*.jsonl` |
+| OpenAI Codex | `~/.codex/sessions/**/rollout-*.jsonl` |
+| command-code | `~/.command-code/projects/**/*.jsonl` |
+| pi | `~/.pi/agent/sessions/**/*.jsonl` |
+| Crush | `<project>/.crush/crush.db` |
+| Hermes Agent | `~/.hermes/state.db` |
+| OpenCode | `~/.local/share/opencode/opencode.db` |
+| OpenAI-style JSON | `{"model", "messages": [...]}` / message arrays |
+
+Each conversation is uploaded with its normalized messages **and** the
+verbatim source (lossless back-conversion), both redacted on-device first
+(`--no-redact` to skip, `--platform <name>` to filter). Conversation ids are
+derived deterministically from the session, so re-running the command updates
+existing rows instead of duplicating them.
+
 ## Agent setup: Claude Code & Codex
 
 Both agents work through the proxy — including "yolo" (no-approval) mode —

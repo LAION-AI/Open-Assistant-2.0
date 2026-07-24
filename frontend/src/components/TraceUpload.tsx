@@ -22,6 +22,9 @@ import {
   Code2,
   Zap,
   PawPrint,
+  Pi,
+  Heart,
+  SquareTerminal,
   ShieldCheck,
   Bot,
   Rocket,
@@ -127,6 +130,45 @@ const TRACE_SOURCES: TraceSource[] = [
       linux: "~/.hermes",
       windows: "%USERPROFILE%\\.hermes",
       unknown: "~/.hermes",
+    },
+  },
+  {
+    id: "pi",
+    label: "pi",
+    color: "#22c55e",
+    icon: Pi,
+    // pi agent sessions: <timestamp>_<uuid>.jsonl per conversation.
+    paths: {
+      mac: "~/.pi/agent/sessions",
+      linux: "~/.pi/agent/sessions",
+      windows: "%USERPROFILE%\\.pi\\agent\\sessions",
+      unknown: "~/.pi/agent/sessions",
+    },
+  },
+  {
+    id: "command-code",
+    label: "Command Code",
+    color: "#eab308",
+    icon: SquareTerminal,
+    // command-code keeps flat JSONL transcripts per project, like Claude Code.
+    paths: {
+      mac: "~/.command-code/projects",
+      linux: "~/.command-code/projects",
+      windows: "%USERPROFILE%\\.command-code\\projects",
+      unknown: "~/.command-code/projects",
+    },
+  },
+  {
+    id: "crush",
+    label: "Crush",
+    color: "#ec4899",
+    icon: Heart,
+    // Charm Crush stores sessions in <project>/.crush/crush.db (SQLite).
+    paths: {
+      mac: "<project>/.crush",
+      linux: "<project>/.crush",
+      windows: "<project>\\.crush",
+      unknown: "<project>/.crush",
     },
   },
   {

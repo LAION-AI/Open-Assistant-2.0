@@ -19,6 +19,78 @@ describe("platform categorization", () => {
   });
 });
 
+describe("pi agent sessions", () => {
+  const raw = [
+    JSON.stringify({ type: "session", version: 3, id: "pi-1", cwd: "/workspace" }),
+    JSON.stringify({ type: "model_change", provider: "rms", modelId: "Qwen3.6-35B" }),
+    JSON.stringify({ type: "thinking_level_change", thinkingLevel: "off" }),
+    JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "write html" }] } }),
+    JSON.stringify({
+      type: "message",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "plan" },
+          { type: "text", text: "Writing." },
+          { type: "toolCall", id: "call_9", name: "write", arguments: { path: "/x.html" } },
+        ],
+      },
+    }),
+    JSON.stringify({
+      type: "message",
+      message: { role: "toolResult", toolCallId: "call_9", toolName: "write", content: [{ type: "text", text: "wrote it" }] },
+    }),
+  ].join("\n");
+
+  test("parses messages, reasoning, tool calls and tool results", () => {
+    const t = parseTrace("s.jsonl", "s.jsonl", raw); // detected by content
+    expect(t.ok).toBe(true);
+    expect(t.platform).toBe("pi");
+    expect(t.model).toBe("Qwen3.6-35B");
+    expect(t.messages.map(m => m.role)).toEqual(["user", "assistant", "tool"]);
+    const a = t.messages[1]!;
+    expect(a.reasoning).toBe("plan");
+    expect(a.tool_calls?.[0]?.id).toBe("call_9");
+    expect(t.messages[2]).toEqual({ role: "tool", content: "wrote it", tool_call_id: "call_9", name: "write" });
+  });
+});
+
+describe("command-code sessions", () => {
+  const raw = [
+    JSON.stringify({ id: "m1", sessionId: "cc-1", role: "user", content: [{ type: "text", text: "build it" }] }),
+    JSON.stringify({
+      id: "m2", sessionId: "cc-1", role: "assistant",
+      content: [
+        { type: "text", text: "On it." },
+        { type: "tool-call", toolCallId: "call_1", toolName: "shell_command", input: { command: "bun init" } },
+      ],
+    }),
+    JSON.stringify({
+      id: "m3", sessionId: "cc-1", role: "tool",
+      content: [{ type: "tool-result", toolCallId: "call_1", toolName: "shell_command", output: { type: "text", value: "done" } }],
+    }),
+  ].join("\n");
+
+  test("parses hyphenated tool blocks with linkage", () => {
+    const t = parseTrace("cc-1.jsonl", "/x/command-code-pods/main/config/projects/w/cc-1.jsonl", raw);
+    expect(t.ok).toBe(true);
+    expect(t.platform).toBe("command-code");
+    const a = t.messages[1]!;
+    expect(a.tool_calls?.[0]).toEqual({
+      id: "call_1",
+      type: "function",
+      function: { name: "shell_command", arguments: JSON.stringify({ command: "bun init" }) },
+    });
+    expect(t.messages[2]).toEqual({ role: "tool", content: "done", tool_call_id: "call_1", name: "shell_command" });
+  });
+
+  test("content sniffing distinguishes command-code from claude-code", () => {
+    expect(detectTracePlatform("x.jsonl", raw)).toBe("command-code");
+    const claude = JSON.stringify({ sessionId: "s", type: "user", message: { role: "user", content: "hi" } });
+    expect(detectTracePlatform("x.jsonl", claude)).toBe("claude-code");
+  });
+});
+
 describe("source capture (lossless upload)", () => {
   test("parseTrace keeps the original file byte-for-byte", () => {
     // Deliberately odd formatting: extra spaces, trailing newline, a non-JSON

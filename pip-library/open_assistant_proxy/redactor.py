@@ -333,6 +333,47 @@ def redact_wire_request(
     return out
 
 
+def redact_source_text(
+    text: str,
+    kind: str,
+    classifier: Any,
+    secret_scan: bool = True,
+    cache: Optional[MutableMapping[str, Any]] = None,
+) -> str:
+    """Redact a verbatim source envelope, parse-aware so the result stays a
+    valid file of the same format: JSONL line-by-line (each line a cached
+    redaction unit), JSON as one document. Unparseable lines fall back to
+    plain-text redaction."""
+
+    def _cached(unit: Any) -> Any:
+        if cache is None:
+            return redact_json_value(unit, classifier, secret_scan)
+        fp = _raw_fingerprint(unit)
+        hit = cache.get(fp)
+        if hit is not None:
+            return hit
+        r = redact_json_value(unit, classifier, secret_scan)
+        cache[fp] = r
+        return r
+
+    if kind == "json":
+        try:
+            return json.dumps(_cached(json.loads(text)), ensure_ascii=False)
+        except Exception:
+            return redact_text(text, classifier, secret_scan)
+
+    lines = []
+    for line in text.split("\n"):
+        if not line.strip():
+            lines.append(line)
+            continue
+        try:
+            lines.append(json.dumps(_cached(json.loads(line)), ensure_ascii=False))
+        except Exception:
+            lines.append(redact_text(line, classifier, secret_scan))
+    return "\n".join(lines)
+
+
 def redact_messages(
     messages: List[Dict[str, Any]],
     classifier: Any,
