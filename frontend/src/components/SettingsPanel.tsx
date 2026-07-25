@@ -5,6 +5,7 @@ import { Label } from "./ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Server, Key, Brain, CheckCircle, HelpCircle, RefreshCw, Copy, Check, Trash2, Network, Code2, Download, Loader2, Trophy, Eye, EyeOff, Terminal } from "lucide-react";
 import { LoginMethods } from "./LoginMethods";
+import { RedactionSettings } from "./RedactionSettings";
 
 interface User {
   id: string;
@@ -257,6 +258,7 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
   return (
     <div className="space-y-6 max-w-xl mx-auto">
     <LoginMethods user={user} onUpdateUser={onUpdateUser} />
+    <RedactionSettings />
        {/* Sub-tab selection pills */}
     <div className="flex rounded-xl bg-background/50 border border-border/60 p-1.5 gap-1.5 animate-fade-in">
       <button

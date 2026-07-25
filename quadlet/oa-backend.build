@@ -1,6 +1,6 @@
 # Builds the backend image from the repo checkout (Podman >= 5.0).
 # On older Podman, delete the .build units and build manually instead:
-#   podman build -t localhost/open-assistant-backend:latest /opt/open-assistant/backend
+#   podman build -t localhost/open-assistant-backend:latest /mnt/storage/open-assistant/backend
 [Build]
 ImageTag=localhost/open-assistant-backend:latest
-SetWorkingDirectory=/opt/open-assistant/backend
+SetWorkingDirectory=/mnt/storage/open-assistant/backend

@@ -13,13 +13,13 @@ Network=open-assistant.network
 # .env must define ALLOWED_HOSTS=<your domain> (quadlet can't remap
 # ${DOMAIN} the way compose does) plus the optional EMAIL* SMTP settings;
 # frontend.env holds JWT_SECRET and FEEDBACK_TOKEN.
-EnvironmentFile=/opt/open-assistant/.env
-EnvironmentFile=/opt/open-assistant/frontend.env
+EnvironmentFile=/mnt/storage/open-assistant/.env
+EnvironmentFile=/mnt/storage/open-assistant/frontend.env
 Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=BACKEND_URL=http://backend:8080
 Environment=USER_DB=/data/user.db
-Volume=/opt/open-assistant/data/frontend:/data:z
+Volume=/mnt/storage/open-assistant/data/frontend:/data:z
 
 [Service]
 Restart=always

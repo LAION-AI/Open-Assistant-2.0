@@ -1,5 +1,5 @@
 # Open Assistant 2.0 — frontend (Bun) : serves the SPA + API routes.
-FROM oven/bun:1 AS base
+FROM docker.io/oven/bun:1 AS base
 WORKDIR /app
 
 # Install dependencies first for better layer caching.

@@ -6,16 +6,16 @@ Systemd-native alternative to `docker-compose.yml` — the same three services
 
 ## Layout assumption
 
-The units reference the repo at **`/opt/open-assistant`**. If you deploy
+The units reference the repo at **`/mnt/storage/open-assistant`**. If you deploy
 elsewhere, replace that prefix in every `.container`/`.build` file
-(`sed -i 's#/opt/open-assistant#/your/path#g' *.container *.build`).
+(`sed -i 's#/mnt/storage/open-assistant#/your/path#g' *.container *.build`).
 
 ## Setup (rootful, recommended for ports 80/443)
 
 ```sh
 # 1. Get the code and state directories in place
-sudo git clone https://github.com/LAION-AI/Open-Assistant-2.0 /opt/open-assistant
-cd /opt/open-assistant
+sudo git clone https://github.com/LAION-AI/Open-Assistant-2.0 /mnt/storage/open-assistant
+cd /mnt/storage/open-assistant
 sudo mkdir -p data/caddy/data data/caddy/config data/frontend data/backend
 
 # 2. Configuration
@@ -26,8 +26,8 @@ sudo mkdir -p data/caddy/data data/caddy/config data/frontend data/backend
 #
 #    Note: compose expands `ALLOWED_HOSTS: ${DOMAIN}` itself; systemd doesn't,
 #    so .env must set ALLOWED_HOSTS explicitly (WebAuthn RP id = your domain).
-sudoedit /opt/open-assistant/.env
-sudoedit /opt/open-assistant/frontend.env
+sudoedit /mnt/storage/open-assistant/.env
+sudoedit /mnt/storage/open-assistant/frontend.env
 
 # 3. Install the units
 sudo cp quadlet/*.container quadlet/*.build quadlet/*.network /etc/containers/systemd/
@@ -51,7 +51,7 @@ instead. Two caveats:
 - Rootless Podman can't bind ports 80/443 by default:
   `sudo sysctl net.ipv4.ip_unprivileged_port_start=80` (persist in
   `/etc/sysctl.d/`), or publish higher ports and front them elsewhere.
-- Keep the repo somewhere your user owns and rewrite the `/opt/open-assistant`
+- Keep the repo somewhere your user owns and rewrite the `/mnt/storage/open-assistant`
   paths (see above). Add `loginctl enable-linger $USER` so the stack survives
   logout.
 
@@ -65,5 +65,5 @@ sudo systemctl restart oa-frontend
 ```
 
 Updating: `git pull`, rerun the `-build` units (or `podman build …`), then
-restart the containers. All persistent state stays in `/opt/open-assistant/data`
+restart the containers. All persistent state stays in `/mnt/storage/open-assistant/data`
 exactly as with compose, so you can switch between compose and quadlet freely.

@@ -14,8 +14,8 @@ Environment=DB_PATH=/data/logs.db
 # Read-only credential lookup for /api/ingest (frontend stays the single
 # writer of user.db).
 Environment=CRED_DB_PATH=/creds/user.db
-Volume=/opt/open-assistant/data/backend:/data:z
-Volume=/opt/open-assistant/data/frontend:/creds:ro,z
+Volume=/mnt/storage/open-assistant/data/backend:/data:z
+Volume=/mnt/storage/open-assistant/data/frontend:/creds:ro,z
 
 [Service]
 Restart=always

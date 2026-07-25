@@ -13,10 +13,10 @@ Network=open-assistant.network
 PublishPort=80:80
 PublishPort=443:443
 # Supplies DOMAIN and ACME_EMAIL to the Caddyfile.
-EnvironmentFile=/opt/open-assistant/.env
-Volume=/opt/open-assistant/Caddyfile:/etc/caddy/Caddyfile:ro,z
-Volume=/opt/open-assistant/data/caddy/data:/data:z
-Volume=/opt/open-assistant/data/caddy/config:/config:z
+EnvironmentFile=/mnt/storage/open-assistant/.env
+Volume=/mnt/storage/open-assistant/Caddyfile:/etc/caddy/Caddyfile:ro,z
+Volume=/mnt/storage/open-assistant/data/caddy/data:/data:z
+Volume=/mnt/storage/open-assistant/data/caddy/config:/config:z
 
 [Service]
 Restart=always

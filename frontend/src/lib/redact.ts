@@ -1,27 +1,64 @@
-// In-browser PII redaction using openai/privacy-filter via Transformers.js.
+// In-browser PII redaction via Transformers.js. Defaults to the lightweight
+// nationaldesignstudio/rampart model; openai/privacy-filter is an opt-in
+// alternative selectable in Settings (see REDACT_MODELS / getRedactModel).
 // The model + ONNX runtime are loaded lazily (only when the user redacts) and
 // run entirely on-device (WebGPU, falling back to WASM). The pure text-splicing
 // logic is kept separate so it can be unit-tested without loading the model.
 
 export type ProgressCb = (info: { status: string; progress?: number; file?: string; name?: string }) => void;
 
-let pipePromise: Promise<any> | null = null;
+export type RedactModel = "rampart" | "openai";
 
-/** Lazily load the token-classification pipeline (singleton). */
-export async function loadRedactor(onProgress?: ProgressCb): Promise<any> {
-  if (!pipePromise) {
-    pipePromise = (async () => {
+// On-device PII models (token-classification, Transformers.js / ONNX). Rampart
+// is the lightweight default; the OpenAI privacy-filter is heavier but broader.
+export const REDACT_MODELS: Record<RedactModel, { id: string; label: string; note: string }> = {
+  rampart: {
+    id: "nationaldesignstudio/rampart",
+    label: "Rampart",
+    note: "~15 MB · fast — MiniLM, 17 PII types (recommended default)",
+  },
+  openai: {
+    id: "openai/privacy-filter",
+    label: "OpenAI Privacy Filter",
+    note: "Larger BERT — slower to download, broader coverage",
+  },
+};
+
+const REDACT_MODEL_KEY = "oa-redact-model";
+
+export function getRedactModel(): RedactModel {
+  try {
+    const v = localStorage.getItem(REDACT_MODEL_KEY);
+    if (v === "rampart" || v === "openai") return v;
+  } catch {}
+  return "rampart";
+}
+
+export function setRedactModel(m: RedactModel) {
+  try {
+    localStorage.setItem(REDACT_MODEL_KEY, m);
+  } catch {}
+}
+
+// Cached per model so switching in Settings doesn't reload an already-loaded one.
+const pipeCache: Partial<Record<RedactModel, Promise<any>>> = {};
+
+/** Lazily load the token-classification pipeline for the chosen (or stored) model. */
+export async function loadRedactor(onProgress?: ProgressCb, model: RedactModel = getRedactModel()): Promise<any> {
+  if (!pipeCache[model]) {
+    pipeCache[model] = (async () => {
       const { pipeline } = await import("@huggingface/transformers");
+      const id = REDACT_MODELS[model].id;
       const base: any = { dtype: "q4", progress_callback: onProgress };
       try {
-        return await pipeline("token-classification", "openai/privacy-filter", { ...base, device: "webgpu" });
+        return await pipeline("token-classification", id, { ...base, device: "webgpu" });
       } catch {
         // No/blocked WebGPU — fall back to WASM (CPU).
-        return await pipeline("token-classification", "openai/privacy-filter", base);
+        return await pipeline("token-classification", id, base);
       }
     })();
   }
-  return pipePromise;
+  return pipeCache[model];
 }
 
 /** Human-friendly redaction placeholder for an entity group. */

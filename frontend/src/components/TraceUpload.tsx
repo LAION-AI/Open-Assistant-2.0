@@ -536,7 +536,7 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
                 <span>{redactState === "done" ? "Redact again" : "Redact PII locally"}</span>
               </Button>
               <span className="text-[11px] text-muted-foreground flex-1 min-w-0">
-                {redactStatus || "Removes names, emails, phones, etc. on-device (openai/privacy-filter) before upload — nothing leaves your machine."}
+                {redactStatus || "Removes names, emails, phones, etc. on-device before upload — nothing leaves your machine. Pick the model in Settings."}
               </span>
             </div>
 

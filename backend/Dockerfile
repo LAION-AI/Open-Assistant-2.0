@@ -1,5 +1,5 @@
 # Open Assistant 2.0 — backend (Go proxy + interaction logger).
-FROM golang:1.25-alpine AS build
+FROM docker.io/library/golang:1.25-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -7,7 +7,7 @@ COPY . .
 # Pure-Go SQLite (modernc) → static binary, no CGO.
 RUN CGO_ENABLED=0 go build -trimpath -o /oa-backend .
 
-FROM alpine:3.20
+FROM docker.io/library/alpine:3.20
 # CA certs for outbound HTTPS to upstream model endpoints.
 RUN apk add --no-cache ca-certificates
 WORKDIR /data
