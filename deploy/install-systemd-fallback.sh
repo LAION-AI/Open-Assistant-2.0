@@ -36,14 +36,45 @@ ensure_iptables_backend() {
 }
 ensure_iptables_backend
 
+# crun implements the cgroup-v2 device controller as an eBPF program. Without
+# CONFIG_CGROUP_BPF every *rootful* container dies at creation with
+# "bpf create ``: Function not implemented" — no podman setting works around a
+# missing kernel feature. Rootless podman never sets up device cgroups.
+ensure_cgroup_bpf() {
+  local cfg=""
+  if [[ -r /proc/config.gz ]]; then cfg="$(zcat /proc/config.gz 2>/dev/null || true)"; fi
+  if [[ -z "$cfg" && -r "/boot/config-$(uname -r)" ]]; then cfg="$(cat "/boot/config-$(uname -r)")"; fi
+  [[ -z "$cfg" ]] && return 0                      # can't tell — let podman speak
+  grep -q '^CONFIG_CGROUP_BPF=y' <<<"$cfg" && return 0
+  cat >&2 <<MSG
+ERROR: kernel $(uname -r) is built without CONFIG_CGROUP_BPF, so rootful
+containers cannot be created on this host ("bpf create: Function not
+implemented"). This script cannot work here.
+
+Use the rootless deployment instead:
+
+    bash ${SRC_DIR}/deploy/install-rootless.sh
+
+MSG
+  exit 1
+}
+ensure_cgroup_bpf
+
 echo "==> Staging application into $APP_DIR"
 install -d -m 755 "$APP_DIR"
 install -d -m 755 "$APP_DIR/data/frontend" "$APP_DIR/data/backend"
 install -d -m 755 "$APP_DIR/data/caddy/data" "$APP_DIR/data/caddy/config"
 
-rsync -a --delete \
-  --exclude 'node_modules' --exclude '.git' --exclude 'dist' --exclude '/data' \
-  "$SRC_DIR"/ "$APP_DIR"/
+# When re-run from the deployed copy itself (e.g. after a reboot), source and
+# destination are the same directory — rsyncing would be a no-op at best, and it
+# would silently mask the fact that no new code arrived. Skip it explicitly.
+if [[ "$SRC_DIR" == "$APP_DIR" ]]; then
+  echo "    (running from the deployed copy — no sync needed)"
+else
+  rsync -a --delete \
+    --exclude 'node_modules' --exclude '.git' --exclude 'dist' --exclude '/data' \
+    "$SRC_DIR"/ "$APP_DIR"/
+fi
 
 for f in .env frontend.env; do
   [[ -f "$APP_DIR/$f" ]] || { echo "ERROR: missing $APP_DIR/$f"; exit 1; }
@@ -85,7 +116,10 @@ podman create --name caddy --network open-assistant --restart always \
 
 echo "==> Generating systemd units"
 tmp="$(mktemp -d)"
-(cd "$tmp" && podman generate systemd --new --name --files backend frontend caddy >/dev/null)
+# podman 4.3.1's `generate systemd` takes exactly one container per call.
+(cd "$tmp" && for c in backend frontend caddy; do
+  podman generate systemd --new --name --files "$c" >/dev/null
+done)
 install -m 644 "$tmp"/container-*.service "$UNIT_DIR/"
 rm -rf "$tmp"
 
