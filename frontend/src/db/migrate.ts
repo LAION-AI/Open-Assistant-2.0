@@ -47,6 +47,37 @@ export function runMigrations() {
     } catch {}
   }
 
+  // One-shot data migrations, recorded so they never run twice. Without the
+  // marker, a re-run would undo choices users made after the first run.
+  sqlite.run(`
+    CREATE TABLE IF NOT EXISTS app_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  const migrationDone = (key: string): boolean =>
+    !!sqlite.query("SELECT 1 FROM app_meta WHERE key = ?").get(key);
+  const markMigration = (key: string) =>
+    sqlite.run("INSERT OR IGNORE INTO app_meta (key, value, created_at) VALUES (?, ?, ?)", [
+      key,
+      "done",
+      Date.now(),
+    ] as any);
+
+  // The leaderboard used to default to on, which published usernames without
+  // anyone opting in. Switch existing accounts off once; they can turn it back
+  // on in Settings. Consent has to be given, not inherited from a default.
+  if (!migrationDone("leaderboard_opt_in")) {
+    try {
+      const changed = sqlite.run("UPDATE users SET show_in_leaderboard = 0 WHERE show_in_leaderboard = 1");
+      markMigration("leaderboard_opt_in");
+      console.log(`Leaderboard switched to opt-in for ${changed.changes} existing account(s).`);
+    } catch (e) {
+      console.error("Leaderboard opt-in migration failed:", e);
+    }
+  }
+
   // Consent audit trail. Append-only: see schema.ts.
   sqlite.run(`
     CREATE TABLE IF NOT EXISTS consent_events (

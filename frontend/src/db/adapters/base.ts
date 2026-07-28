@@ -95,4 +95,9 @@ export interface DatabaseAdapter {
     version: string,
     source: ConsentSource
   ): Promise<void>;
+
+  // Erasure (GDPR Art. 17). Removes the account row and everything hanging off
+  // it — credentials, pending OTPs, consent events. Interaction data lives in
+  // the Go backend and is deleted separately by the caller.
+  deleteUser(id: string): Promise<void>;
 }

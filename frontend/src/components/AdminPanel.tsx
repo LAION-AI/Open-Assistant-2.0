@@ -15,7 +15,7 @@ import {
 } from "../lib/chat";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Checkbox } from "./ui/checkbox";
-import { Users, FileText, Database, Shield, Coins, Calendar, ChevronDown, ChevronUp, RefreshCw, AlertCircle, Brain, MessageSquare, Code, Eye, EyeOff } from "lucide-react";
+import { Users, FileText, Database, Shield, Coins, Calendar, ChevronDown, ChevronUp, RefreshCw, AlertCircle, Brain, MessageSquare, Code, Eye, EyeOff, DownloadCloud } from "lucide-react";
 
 interface AdminUser {
   id: string;
@@ -267,6 +267,34 @@ export function AdminPanel() {
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
+      {/* Dataset export. The file only ever contains contributors who granted
+          consent for the current document version — the backend enforces that,
+          this button cannot widen it. */}
+      <Card className="bg-card/45 border-border/80 backdrop-blur-md">
+        <CardContent className="p-5 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0">
+              <DownloadCloud className="w-4 h-4 text-emerald-400" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold">Export consented dataset</div>
+              <div className="text-[11px] text-muted-foreground leading-relaxed">
+                JSONL of interactions from contributors who consented to publication, with
+                pseudonymous participant ids in place of account ids. Everyone else is excluded
+                by the query, not by review.
+              </div>
+            </div>
+          </div>
+          <a
+            href="/api/admin/export"
+            download
+            className="h-8 px-3 inline-flex items-center rounded-lg border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 text-[11px] font-semibold flex-shrink-0 transition-colors"
+          >
+            Download
+          </a>
+        </CardContent>
+      </Card>
+
       {/* Dashboard Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="bg-card/45 border-border/80 backdrop-blur-md">

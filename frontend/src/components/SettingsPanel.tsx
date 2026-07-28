@@ -4,6 +4,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Server, Key, Brain, CheckCircle, HelpCircle, RefreshCw, Copy, Check, Trash2, Network, Code2, Download, Loader2, Trophy, Eye, EyeOff, Terminal, Database } from "lucide-react";
+import { DangerZone } from "./DangerZone";
 import { LoginMethods } from "./LoginMethods";
 import { RedactionSettings } from "./RedactionSettings";
 import { TwoFactorSettings } from "./TwoFactorSettings";
@@ -836,6 +837,8 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
         </div>
       </CardContent>
     </Card>
+
+    <DangerZone username={user.username} />
     </div>
   );
 }

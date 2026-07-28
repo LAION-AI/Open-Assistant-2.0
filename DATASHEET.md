@@ -22,8 +22,9 @@ community, as the successor to OpenAssistant/OASST1.
 
 **Who created it and who funded it?**
 LAION gemeinnütziger e.V., a nonprofit association registered in Hamburg,
-Germany (VR 25085), with contributions from volunteers. *[TO CONFIRM: grant or
-compute funding to acknowledge.]*
+Germany (VR 25085), with contributions from volunteers. Collection
+infrastructure runs on rented servers in Helsinki, Finland (EU).
+*[TO CONFIRM: grant or compute funding to acknowledge.]*
 
 ## Composition
 
@@ -87,8 +88,9 @@ Yes, and the two are recorded separately:
   any time in Settings, and every grant and withdrawal is written to a
   `consent_events` audit table with the document version and timestamp.
 
-Contributors can view and delete their own contributions at any time ("My
-Uploads"), and can request full account deletion.
+Contributors can erase their contributions at any time — individually ("My
+Uploads"), all at once, or by deleting their account entirely, all self-service
+in the app. Erased data leaves the working corpus and every subsequent release.
 
 **Ethical review.** No institutional review board process was undertaken; the
 platform is operated by a nonprofit association rather than a university.
@@ -99,8 +101,19 @@ statement, and whether a partner institution should provide one.]*
 
 Before any public release:
 
-- interactions from non-consenting contributors are excluded;
-- account identifiers are replaced with pseudonymous participant identifiers;
+- interactions from non-consenting contributors are excluded — enforced in the
+  export query itself, which joins against the consent record and drops anyone
+  whose consent is absent, withdrawn, or attached to a superseded version of the
+  consent document. There is no code path that exports unfiltered rows;
+- account identifiers are replaced with pseudonymous participant identifiers
+  (domain-separated SHA-256, stable per contributor so their instances stay
+  linkable — note this is a hash of the account id, not a keyed MAC, so it
+  resists casual inspection rather than a determined guessing attack against a
+  known account id);
+- conversation identifiers are pseudonymised the same way, because ids
+  originating from imported agent traces can embed local file paths or machine
+  names;
+- each instance carries the consent document version it was released under;
 - automated PII detection runs over the content;
 - *[pending first release: exact filter versions, thresholds, and the fraction
   of instances removed at each stage.]*
@@ -156,8 +169,8 @@ Yes; collection is continuous and further releases are expected. Each release
 is versioned, and this datasheet is updated with it.
 
 **How are erasure requests handled?**
-Withdrawal of consent and deletion requests remove the data from the working
-corpus and from all subsequent releases. Already-published releases cannot be
+Withdrawal of consent and deletion — both self-service — remove the data from
+the working corpus and from all subsequent releases. Already-published releases cannot be
 recalled — contributors are told this before consenting, and it is stated in
 [the Privacy Policy](frontend/legal/privacy.md) §5.3.
 

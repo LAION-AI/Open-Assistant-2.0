@@ -65,6 +65,10 @@ type LogRepository interface {
 	DeleteByConversation(ctx context.Context, userID, conversationID string) (int64, error)
 	// DeleteByID removes a single owned log row.
 	DeleteByID(ctx context.Context, userID string, id int64) (int64, error)
+	// DeleteAllByUser removes every row a user has contributed. Used by the
+	// self-service "delete my data" and account-deletion paths, where leaving a
+	// single row behind would make the erasure a lie.
+	DeleteAllByUser(ctx context.Context, userID string) (int64, error)
 	UpdateContent(ctx context.Context, userID, conversationID string, prompt, response json.RawMessage, tokens int) (int64, error)
 	// UpdateContentByID rewrites the prompt/response/tokens of a single log row by ID.
 	UpdateContentByID(ctx context.Context, userID string, id int64, prompt, response json.RawMessage, tokens int) (int64, error)

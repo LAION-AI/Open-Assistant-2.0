@@ -53,6 +53,10 @@ func main() {
 	// Caddy path; verifies API keys itself against the read-only credential store).
 	mux.HandleFunc("/api/ingest", makeIngestHandler(repo, creds))
 
+	// Dataset export. Internal (not routed publicly by Caddy); the frontend
+	// gates it on an admin session. Consent is enforced inside the handler.
+	mux.HandleFunc("/api/export", makeExportHandler(repo, creds))
+
 	// Health check endpoint
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -128,6 +132,9 @@ func main() {
 			UserID         string `json:"userId"`
 			ConversationID string `json:"conversationId"`
 			ID             int64  `json:"id"`
+			// Must be set explicitly: erasing everything a user contributed
+			// should never be reachable by omitting a field.
+			All bool `json:"all"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.UserID == "" {
 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
@@ -136,12 +143,14 @@ func main() {
 
 		var deleted int64
 		var err error
-		if payload.ConversationID != "" {
+		if payload.All {
+			deleted, err = repo.DeleteAllByUser(r.Context(), payload.UserID)
+		} else if payload.ConversationID != "" {
 			deleted, err = repo.DeleteByConversation(r.Context(), payload.UserID, payload.ConversationID)
 		} else if payload.ID != 0 {
 			deleted, err = repo.DeleteByID(r.Context(), payload.UserID, payload.ID)
 		} else {
-			http.Error(w, "conversationId or id required", http.StatusBadRequest)
+			http.Error(w, "conversationId, id or all required", http.StatusBadRequest)
 			return
 		}
 		if err != nil {

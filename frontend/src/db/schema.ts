@@ -11,7 +11,9 @@ export const users = sqliteTable("users", {
   apiKey: text("api_key"), // SHA-256 hash of the user's proxy key (never plaintext); shown once at creation
   passwordHash: text("password_hash"), // for email+password login (null = passkey-only)
   emailVerified: integer("email_verified").default(0).notNull(),
-  showInLeaderboard: integer("show_in_leaderboard").default(1).notNull(),
+  // Opt-in: publishing a username is consent-based (GDPR Art. 6(1)(a)), so it
+  // stays off until someone actively turns it on.
+  showInLeaderboard: integer("show_in_leaderboard").default(0).notNull(),
   isAdmin: integer("is_admin").default(0).notNull(),
   // Two-factor auth. Only meaningful for password accounts — passkeys are
   // already phishing-resistant multi-factor, so 2FA is not offered for them.

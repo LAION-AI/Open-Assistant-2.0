@@ -252,6 +252,16 @@ export class DrizzleAdapter implements DatabaseAdapter {
     await this.db.update(users).set({ onboardedAt: at }).where(eq(users.id, id)).run();
   }
 
+  async deleteUser(id: string): Promise<void> {
+    // Explicit rather than relying on ON DELETE CASCADE: the foreign keys were
+    // added over time and SQLite only enforces them when the pragma is on, so
+    // an unenforced cascade would silently leave credentials behind.
+    await this.db.delete(consentEvents).where(eq(consentEvents.userId, id)).run();
+    await this.db.delete(credentials).where(eq(credentials.userId, id)).run();
+    await this.db.delete(emailOtps).where(eq(emailOtps.userId, id)).run();
+    await this.db.delete(users).where(eq(users.id, id)).run();
+  }
+
   async recordConsent(
     userId: string,
     kind: ConsentKind,

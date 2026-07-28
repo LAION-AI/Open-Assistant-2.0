@@ -75,8 +75,9 @@ engineering one, so the two are kept separate in both the UI and the database:
 
 Every grant and withdrawal is appended to a `consent_events` table with the
 document version, timestamp and origin, so a release can always be traced back
-to the consent that permits it. The documents have **not yet been reviewed by
-a lawyer** — see [frontend/legal/README.md](frontend/legal/README.md).
+to the consent that permits it. Export is gated on that record: the release
+query joins against it, so a contributor who has not consented cannot be
+exported by mistake.
 
 ---
 

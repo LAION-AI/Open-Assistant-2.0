@@ -74,7 +74,7 @@ it is strictly necessary, so no cookie banner is required.
 | Operating your account, authentication, 2FA | §2.1 | Art. 6(1)(b) GDPR — performance of a contract |
 | Providing chat, the proxy and trace import; showing you your own history | §2.2 | Art. 6(1)(b) GDPR |
 | Security, abuse prevention, rate limiting, keeping the service running | §2.4, §2.1 | Art. 6(1)(f) GDPR — legitimate interest in a secure service |
-| Public leaderboard display of your username and contribution totals | §2.1 | Art. 6(1)(f) GDPR — legitimate interest in community recognition. This is **on by default**; switch it off at any time in Settings |
+| Public leaderboard display of your username and contribution totals | §2.1 | Art. 6(1)(a) GDPR — consent. **Off unless you switch it on**, at signup or later in Settings, and revocable at any time |
 | **Publishing your interactions in an open dataset** | §2.2 | **Art. 6(1)(a) GDPR — your separate, explicit consent** |
 | Processing feedback you send us | §2.3 | Art. 6(1)(f) GDPR |
 | Meeting legal obligations | as required | Art. 6(1)(c) GDPR |
@@ -147,9 +147,12 @@ from your explicit consent to publication (Art. 49(1)(a) GDPR).
   privacy policy govern what it does with them. We have no control over it.
 - **Email delivery.** Verification, password-reset and 2FA emails are sent
   through our SMTP provider.
-- **Hosting.** The service runs on server infrastructure operated for LAION.
-  *[TO CONFIRM: hosting provider name, location, and whether a data processing
-  agreement under Art. 28 GDPR is in place.]*
+- **Hosting.** The service runs on infrastructure rented from **Hetzner Online
+  GmbH**, Industriestr. 25, 91710 Gunzenhausen, Germany. The server itself is
+  located in Hetzner's **Helsinki, Finland** data centre — inside the EU, so no
+  transfer to a third country is involved in hosting. Hetzner acts as a
+  processor on our behalf under a data processing agreement pursuant to
+  Art. 28 GDPR.
 
 We do not sell personal data, and we do not share it with third parties beyond
 what is described here.
@@ -158,9 +161,9 @@ what is described here.
 
 | Data | Retention |
 |---|---|
-| Account data | Until you ask us to delete your account |
-| Interaction data | Until you delete it in "My Uploads", or until account deletion |
-| Consent records | Kept as long as the account exists, and afterwards only as evidence that consent was validly obtained and withdrawn (Art. 7(1) GDPR) |
+| Account data | Until you delete your account, which you can do yourself in Settings |
+| Interaction data | Until you delete it — individually in "My Uploads", all at once in Settings, or with the account |
+| Consent records | Kept while the account exists as evidence that consent was validly obtained (Art. 7(1) GDPR), and deleted with the account |
 | Technical logs | Rotated out of the system journal in the ordinary course |
 | Published dataset releases | Permanent — see section 5.3 |
 
@@ -171,10 +174,18 @@ it erased (Art. 17), restrict processing (Art. 18), receive it in a portable
 format (Art. 20), object to processing based on legitimate interest (Art. 21),
 and withdraw consent at any time (Art. 7(3)).
 
-In the app you can already: view and delete your uploads ("My Uploads"), toggle
-leaderboard visibility, and grant or withdraw dataset consent (Settings).
+You can exercise most of these yourself, immediately, without asking us:
 
-For **account deletion or a data export**, email
+- **View and delete individual contributions** — "My Uploads".
+- **Delete all your interaction data at once** — Settings → Danger Zone. Your
+  account stays, the data goes.
+- **Delete your account entirely** — Settings → Danger Zone. This erases your
+  account record, credentials, passkeys, two-factor secrets, consent records
+  and every interaction you have contributed. It is immediate and irreversible.
+- **Grant or withdraw dataset consent**, and **turn leaderboard visibility on
+  or off** — Settings.
+
+For a **data export**, or anything the app does not cover, email
 [contact@laion.ai](mailto:contact@laion.ai) — we act within one month, as
 Art. 12(3) GDPR requires.
 

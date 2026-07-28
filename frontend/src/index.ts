@@ -723,9 +723,18 @@ async function checkSecondFactor(user: any, code: string): Promise<string | null
  * worth having, because "never asked" and "asked and said no" are different
  * facts when a dataset release has to account for its provenance.
  */
-async function recordSignupConsent(userId: string, datasetConsent: boolean): Promise<void> {
+async function recordSignupConsent(
+  userId: string,
+  datasetConsent: boolean,
+  showInLeaderboard: boolean
+): Promise<void> {
   await dbAdapter.recordConsent(userId, "terms", true, TERMS_VERSION, "signup");
   await dbAdapter.recordConsent(userId, "dataset", datasetConsent, DATASET_CONSENT_VERSION, "signup");
+  // Leaderboard visibility is consent-based too, but it needs no versioned
+  // document behind it — the column is the whole record.
+  if (showInLeaderboard) {
+    await dbAdapter.updateShowInLeaderboard(userId, true);
+  }
 }
 
 // Per-user contribution rollup from the Go backend, plus the global totals
@@ -844,7 +853,8 @@ const server = serve({
     "/api/auth/email/register": async req => {
       try {
         if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
-        const { username, email, password, acceptedTerms, datasetConsent } = await req.json();
+        const { username, email, password, acceptedTerms, datasetConsent, showInLeaderboard } =
+          await req.json();
         const u = (username || "").trim();
         const e = (email || "").trim().toLowerCase();
         if (u.length < 3) return Response.json({ error: "Username must be at least 3 characters" }, { status: 400 });
@@ -860,7 +870,7 @@ const server = serve({
 
         const hash = await Bun.password.hash(password);
         const user = await dbAdapter.createEmailUser(u, e, hash);
-        await recordSignupConsent(user.id, datasetConsent === true);
+        await recordSignupConsent(user.id, datasetConsent === true, showInLeaderboard === true);
 
         if (emailEnabled) {
           const token = await createEmailActionToken({ purpose: "verify", userId: user.id }, "24h");
@@ -1317,7 +1327,7 @@ const server = serve({
         if (req.method !== "POST") {
           return Response.json({ error: "Method not allowed" }, { status: 405 });
         }
-        const { username, acceptedTerms, datasetConsent } = await req.json();
+        const { username, acceptedTerms, datasetConsent, showInLeaderboard } = await req.json();
         if (!username || username.trim().length < 3) {
           return Response.json({ error: "Username must be at least 3 characters" }, { status: 400 });
         }
@@ -1356,6 +1366,7 @@ const server = serve({
           userId,
           acceptedTerms: true,
           datasetConsent: datasetConsent === true,
+          showInLeaderboard: showInLeaderboard === true,
         });
 
         return new Response(JSON.stringify(options), {
@@ -1447,7 +1458,11 @@ const server = serve({
         }
 
         if (isNewUser) {
-          await recordSignupConsent(user.id, storedData.datasetConsent === true);
+          await recordSignupConsent(
+            user.id,
+            storedData.datasetConsent === true,
+            storedData.showInLeaderboard === true
+          );
         }
 
         // 2. Save credential
@@ -1616,6 +1631,79 @@ const server = serve({
         return new Response(JSON.stringify({ verified: true, user }), { headers });
       } catch (err: any) {
         console.error("Error verifying login:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Erasure (GDPR Art. 17), self-service. Two scopes:
+    //   scope=traces  — every interaction, account kept
+    //   scope=account — the above, plus the account and all credentials
+    // Interaction data lives in the Go backend, so both scopes go there first:
+    // deleting the account row while its logs survive would orphan data that
+    // nobody can then reach or remove.
+    "/api/user/delete": async req => {
+      try {
+        if (req.method !== "POST") {
+          return Response.json({ error: "Method not allowed" }, { status: 405 });
+        }
+        const cookies = parseCookies(req.headers.get("cookie"));
+        const sessionToken = cookies["session"];
+        if (!sessionToken) {
+          return Response.json({ error: "Unauthorized" }, { status: 401 });
+        }
+        const payload = await verifySessionToken(sessionToken);
+        if (!payload) {
+          return Response.json({ error: "Invalid session" }, { status: 401 });
+        }
+
+        const { scope, confirm } = await req.json();
+        if (scope !== "traces" && scope !== "account") {
+          return Response.json({ error: "Unknown delete scope" }, { status: 400 });
+        }
+
+        const user = await dbAdapter.getUser(payload.userId);
+        if (!user) return Response.json({ error: "User not found" }, { status: 404 });
+
+        // Typed confirmation, checked server-side as well as in the dialog —
+        // an irreversible destructive call should not be one stray fetch away.
+        if (confirm !== user.username) {
+          return Response.json({ error: "Confirmation did not match your username" }, { status: 400 });
+        }
+
+        const res = await fetch(`${BACKEND_URL}/api/logs/delete`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: user.id, all: true }),
+        });
+        if (!res.ok) {
+          // Stop here on the account path: erase the data first, or not at all.
+          throw new Error(`Backend refused to delete interaction data (${res.status})`);
+        }
+        const { deleted = 0 } = await res.json().catch(() => ({ deleted: 0 }));
+
+        if (scope === "traces") {
+          console.log(`Deleted ${deleted} interaction row(s) for user=${user.id} (data only)`);
+          return Response.json({ success: true, deleted });
+        }
+
+        await dbAdapter.deleteUser(user.id);
+        console.log(`Deleted account ${user.id} and ${deleted} interaction row(s)`);
+
+        // Clear the session: the account behind it no longer exists.
+        return new Response(JSON.stringify({ success: true, deleted, accountDeleted: true }), {
+          headers: {
+            "Content-Type": "application/json",
+            "Set-Cookie": serializeCookie("session", "", {
+              httpOnly: true,
+              secure: isHttps(req),
+              sameSite: "Lax",
+              path: "/",
+              maxAge: 0,
+            }),
+          },
+        });
+      } catch (err: any) {
+        console.error("Error deleting user data:", err);
         return Response.json({ error: err.message }, { status: 500 });
       }
     },
@@ -1819,6 +1907,49 @@ const server = serve({
     },
 
     // Admin: List all users
+    // Dataset export (admin). Streams the backend's consent-filtered JSONL
+    // straight through: this layer authenticates and names the consent version
+    // it is releasing under, and the backend decides what that version permits.
+    // Nothing here can widen the selection.
+    "/api/admin/export": async req => {
+      try {
+        const cookies = parseCookies(req.headers.get("cookie"));
+        const sessionToken = cookies["session"];
+        if (!sessionToken) {
+          return Response.json({ error: "Unauthorized" }, { status: 401 });
+        }
+        const payload = await verifySessionToken(sessionToken);
+        if (!payload) {
+          return Response.json({ error: "Invalid session" }, { status: 401 });
+        }
+        const user = await dbAdapter.getUser(payload.userId);
+        if (!user || user.isAdmin !== 1) {
+          return Response.json({ error: "Forbidden" }, { status: 403 });
+        }
+
+        const res = await fetch(
+          `${BACKEND_URL}/api/export?consentVersion=${encodeURIComponent(DATASET_CONSENT_VERSION)}`
+        );
+        if (!res.ok) {
+          const detail = await res.text().catch(() => "");
+          throw new Error(`Backend export failed (${res.status}) ${detail}`.trim());
+        }
+
+        const rows = res.headers.get("X-Export-Rows") || "0";
+        console.log(`Admin ${user.username} exported ${rows} row(s) at consent version ${DATASET_CONSENT_VERSION}`);
+        return new Response(res.body, {
+          headers: {
+            "Content-Type": "application/x-ndjson",
+            "Content-Disposition": `attachment; filename="oa2-export-v${DATASET_CONSENT_VERSION}.jsonl"`,
+            "X-Export-Rows": rows,
+          },
+        });
+      } catch (err: any) {
+        console.error("Error exporting dataset:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
     "/api/admin/users": async req => {
       try {
         const cookies = parseCookies(req.headers.get("cookie"));

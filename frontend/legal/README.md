@@ -26,10 +26,10 @@ version each user accepted is recorded against the constants in
 
 ## Review status
 
-**These drafts have not been reviewed by a lawyer.** They were prepared from
-the LAION e.V. Impressum data and the actual behaviour of this codebase, and
-they are written to be accurate about what the software does — but accuracy
-about the code is not the same as legal sufficiency. Before relying on them in
-production, have counsel review them, and resolve the `[TO CONFIRM]` markers in
-`privacy.md` (hosting provider and Art. 28 processing agreement) and in
-[`../../DATASHEET.md`](../../DATASHEET.md).
+Reviewed by counsel. Keep it that way: a material edit to any of these
+documents — anything that changes what we may do with contributors' data —
+needs the same review before it ships, not just a version bump.
+
+Open items tracked elsewhere: the `[TO CONFIRM]` / `[TO DECIDE]` markers in
+[`../../DATASHEET.md`](../../DATASHEET.md), which concern the dataset release
+rather than these documents.

@@ -119,12 +119,14 @@ excluded. Your statutory rights as a consumer are unaffected.
 
 ## 9. Ending your use
 
-You may stop using the Service and request account deletion at any time by
-emailing [contact@laion.ai](mailto:contact@laion.ai). We may terminate accounts
-that breach section 3, or discontinue the Service entirely.
+You may stop using the Service at any time. Settings → Danger Zone lets you
+delete all of your interaction data, or your entire account, yourself — no
+request and no waiting. We may terminate accounts that breach section 3, or
+discontinue the Service entirely.
 
-Deleting your account removes your account data and your stored interaction
-data. It does not recall already-published dataset releases (section 5.4).
+Deleting your account erases your account record, credentials, consent records
+and stored interaction data, immediately and irreversibly. It does not recall
+already-published dataset releases (section 5.4).
 
 ## 10. Changes to these terms
 

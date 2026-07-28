@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 interface ConsentState {
   acceptedTerms: boolean;
   datasetConsent: boolean;
+  showInLeaderboard: boolean;
 }
 
 interface ConsentCheckboxesProps {
@@ -12,13 +13,13 @@ interface ConsentCheckboxesProps {
 }
 
 /**
- * The two consent checkboxes shown on every signup path.
+ * The consent checkboxes shown on every signup path.
  *
  * They are deliberately separate controls: accepting the terms is required to
- * hold an account, while consenting to publication of your interactions is
- * optional and revocable. Pre-ticking the second one, or folding it into the
- * first, would make it consent that was never freely given — so the dataset box
- * starts empty and stays empty unless the person ticks it.
+ * hold an account, while publishing your interactions and showing your username
+ * on the leaderboard are optional and revocable. Pre-ticking either optional
+ * box, or folding it into the first, would make it consent that was never
+ * freely given — so both start empty and stay empty unless actively ticked.
  */
 export function ConsentCheckboxes({ value, onChange, disabled }: ConsentCheckboxesProps) {
   const [consentText, setConsentText] = useState<string | null>(null);
@@ -70,9 +71,28 @@ export function ConsentCheckboxes({ value, onChange, disabled }: ConsentCheckbox
           <span className="text-muted-foreground/70">(optional — you can change this any time in Settings)</span>
         </span>
       </label>
+
+      <label className="flex items-start gap-2.5 cursor-pointer group">
+        <input
+          type="checkbox"
+          checked={value.showInLeaderboard}
+          disabled={disabled}
+          onChange={e => onChange({ ...value, showInLeaderboard: e.target.checked })}
+          className="mt-0.5 h-3.5 w-3.5 rounded border-input accent-amber-600 cursor-pointer"
+        />
+        <span className="text-[11px] leading-relaxed text-muted-foreground group-hover:text-foreground transition-colors">
+          Publish my username on the public leaderboard, alongside how much I
+          have contributed.{" "}
+          <span className="text-muted-foreground/70">(optional — off unless you tick it)</span>
+        </span>
+      </label>
     </div>
   );
 }
 
-export const EMPTY_CONSENT: ConsentState = { acceptedTerms: false, datasetConsent: false };
+export const EMPTY_CONSENT: ConsentState = {
+  acceptedTerms: false,
+  datasetConsent: false,
+  showInLeaderboard: false,
+};
 export type { ConsentState };

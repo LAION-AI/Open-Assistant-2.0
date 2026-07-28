@@ -47,6 +47,7 @@ export async function createChallengeToken(payload: {
   // is what the user actually ticked — the client cannot alter it in between.
   acceptedTerms?: boolean;
   datasetConsent?: boolean;
+  showInLeaderboard?: boolean;
 }) {
   return await new jose.SignJWT(payload)
     .setProtectedHeader({ alg: "HS256" })
@@ -64,6 +65,7 @@ export async function verifyChallengeToken(token: string) {
       userId?: string;
       acceptedTerms?: boolean;
       datasetConsent?: boolean;
+      showInLeaderboard?: boolean;
     };
   } catch (e) {
     return null;

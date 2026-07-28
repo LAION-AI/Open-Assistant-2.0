@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -195,6 +196,20 @@ func (r *SQLiteRepository) DeleteByConversation(ctx context.Context, userID, con
 func (r *SQLiteRepository) DeleteByID(ctx context.Context, userID string, id int64) (int64, error) {
 	res, err := r.db.ExecContext(ctx,
 		`DELETE FROM interaction_logs WHERE user_id = ? AND id = ?`, userID, id)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
+func (r *SQLiteRepository) DeleteAllByUser(ctx context.Context, userID string) (int64, error) {
+	// Guard against an empty user id wiping the table: an empty string is a
+	// programming error upstream, not a request to delete everything.
+	if userID == "" {
+		return 0, fmt.Errorf("DeleteAllByUser: empty user id")
+	}
+	res, err := r.db.ExecContext(ctx, `DELETE FROM interaction_logs WHERE user_id = ?`, userID)
 	if err != nil {
 		return 0, err
 	}
