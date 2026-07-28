@@ -1,7 +1,13 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
-import { users, credentials } from "../schema";
-import type { DatabaseAdapter, UserRecord, StoredCredential } from "./base";
+import { users, credentials, emailOtps } from "../schema";
+import type {
+  DatabaseAdapter,
+  UserRecord,
+  StoredCredential,
+  TwoFactorSettings,
+  PendingOtp,
+} from "./base";
 
 export class DrizzleAdapter implements DatabaseAdapter {
   private db: BunSQLiteDatabase<typeof import("../schema")>;
@@ -186,5 +192,61 @@ export class DrizzleAdapter implements DatabaseAdapter {
       .where(eq(users.showInLeaderboard, 1))
       .all();
     return res.map(u => ({ username: u.username, totalTokens: 0, totalTraces: 0 }));
+  }
+
+  // --- Two-factor auth -------------------------------------------------------
+
+  async setTwoFactor(id: string, settings: TwoFactorSettings): Promise<void> {
+    await this.db
+      .update(users)
+      .set({
+        twofaMethod: settings.method,
+        totpSecret: settings.totpSecret ?? null,
+        backupCodes: settings.backupCodes ? JSON.stringify(settings.backupCodes) : null,
+      })
+      .where(eq(users.id, id))
+      .run();
+  }
+
+  async setBackupCodes(id: string, hashes: string[]): Promise<void> {
+    await this.db.update(users).set({ backupCodes: JSON.stringify(hashes) }).where(eq(users.id, id)).run();
+  }
+
+  async savePendingOtp(userId: string, codeHash: string, expiresAt: number): Promise<void> {
+    // One pending code per user: a re-request replaces the previous one and
+    // resets the attempt counter.
+    await this.db
+      .insert(emailOtps)
+      .values({ userId, codeHash, expiresAt, attempts: 0, createdAt: Date.now() })
+      .onConflictDoUpdate({
+        target: emailOtps.userId,
+        set: { codeHash, expiresAt, attempts: 0, createdAt: Date.now() },
+      })
+      .run();
+  }
+
+  async getPendingOtp(userId: string): Promise<PendingOtp | null> {
+    const res = await this.db.select().from(emailOtps).where(eq(emailOtps.userId, userId)).get();
+    return res ? { userId: res.userId, codeHash: res.codeHash, expiresAt: res.expiresAt, attempts: res.attempts } : null;
+  }
+
+  async bumpOtpAttempts(userId: string): Promise<number> {
+    await this.db
+      .update(emailOtps)
+      .set({ attempts: sql`${emailOtps.attempts} + 1` })
+      .where(eq(emailOtps.userId, userId))
+      .run();
+    const res = await this.db.select().from(emailOtps).where(eq(emailOtps.userId, userId)).get();
+    return res?.attempts ?? 0;
+  }
+
+  async clearPendingOtp(userId: string): Promise<void> {
+    await this.db.delete(emailOtps).where(eq(emailOtps.userId, userId)).run();
+  }
+
+  // --- Onboarding ------------------------------------------------------------
+
+  async setOnboardedAt(id: string, at: number | null): Promise<void> {
+    await this.db.update(users).set({ onboardedAt: at }).where(eq(users.id, id)).run();
   }
 }

@@ -13,6 +13,23 @@ export const users = sqliteTable("users", {
   emailVerified: integer("email_verified").default(0).notNull(),
   showInLeaderboard: integer("show_in_leaderboard").default(1).notNull(),
   isAdmin: integer("is_admin").default(0).notNull(),
+  // Two-factor auth. Only meaningful for password accounts — passkeys are
+  // already phishing-resistant multi-factor, so 2FA is not offered for them.
+  twofaMethod: text("twofa_method"), // 'totp' | 'email' | null (= disabled)
+  totpSecret: text("totp_secret"), // base32; set during setup, kept for 'totp'
+  backupCodes: text("backup_codes"), // JSON array of SHA-256 recovery-code hashes
+  onboardedAt: integer("onboarded_at"), // null = onboarding not finished/skipped
+  createdAt: integer("created_at").notNull(),
+});
+
+// Short-lived 6-digit codes for the email 2FA method. Kept server-side (rather
+// than inside the signed challenge) so attempts can be counted — a 6-digit code
+// held by the client would otherwise be brute-forceable offline.
+export const emailOtps = sqliteTable("email_otps", {
+  userId: text("user_id").primaryKey(), // one pending code per user
+  codeHash: text("code_hash").notNull(),
+  expiresAt: integer("expires_at").notNull(),
+  attempts: integer("attempts").default(0).notNull(),
   createdAt: integer("created_at").notNull(),
 });
 

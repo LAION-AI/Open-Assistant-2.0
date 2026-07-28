@@ -11,6 +11,23 @@ export interface UserRecord {
   emailVerified?: number;
   showInLeaderboard?: number;
   isAdmin: number;
+  twofaMethod?: string | null; // 'totp' | 'email' | null
+  totpSecret?: string | null;
+  backupCodes?: string | null; // JSON array of SHA-256 hashes
+  onboardedAt?: number | null;
+}
+
+export interface TwoFactorSettings {
+  method: "totp" | "email" | null;
+  totpSecret?: string | null;
+  backupCodes?: string[] | null;
+}
+
+export interface PendingOtp {
+  userId: string;
+  codeHash: string;
+  expiresAt: number;
+  attempts: number;
 }
 
 export interface StoredCredential {
@@ -49,4 +66,15 @@ export interface DatabaseAdapter {
   updateCredentialCounter(id: string, counter: number): Promise<void>;
   updateShowInLeaderboard(id: string, show: boolean): Promise<void>;
   getLeaderboard(): Promise<{ username: string; totalTokens: number; totalTraces: number }[]>;
+
+  // Two-factor auth
+  setTwoFactor(id: string, settings: TwoFactorSettings): Promise<void>;
+  setBackupCodes(id: string, hashes: string[]): Promise<void>;
+  savePendingOtp(userId: string, codeHash: string, expiresAt: number): Promise<void>;
+  getPendingOtp(userId: string): Promise<PendingOtp | null>;
+  bumpOtpAttempts(userId: string): Promise<number>;
+  clearPendingOtp(userId: string): Promise<void>;
+
+  // Onboarding
+  setOnboardedAt(id: string, at: number | null): Promise<void>;
 }

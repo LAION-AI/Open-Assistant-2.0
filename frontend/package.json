@@ -1,5 +1,5 @@
 {
-  "name": "bun-react-template",
+  "name": "open-assistant-2",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -23,6 +23,7 @@
     "katex": "^0.17.0",
     "lucide-react": "^1",
     "nodemailer": "^9.0.1",
+    "qrcode": "^1.5.4",
     "radix-ui": "^1.6.0",
     "react": "^19",
     "react-dom": "^19",
@@ -37,6 +38,7 @@
   "devDependencies": {
     "@types/bun": "latest",
     "@types/nodemailer": "^8.0.1",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.31.10",

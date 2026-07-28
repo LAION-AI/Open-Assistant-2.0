@@ -39,13 +39,9 @@ func main() {
 	if credPath == "" {
 		credPath = "/creds/user.db"
 	}
-	creds, err := openCredStore(credPath)
-	if err != nil {
-		log.Printf("Warning: credential store unavailable (%v); /api/ingest will reject uploads", err)
-		creds = nil
-	} else {
-		defer creds.db.Close()
-	}
+	// Opened on first use — user.db may not exist yet on a fresh deployment.
+	creds := newCredStore(credPath)
+	defer creds.Close()
 
 	mux := http.NewServeMux()
 

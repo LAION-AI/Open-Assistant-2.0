@@ -32,14 +32,17 @@ User interaction data — the prompts you type, the follow-ups you send, the ima
 | Feature | Status | Description |
 |---|---|---|
 | 🔐 Passkey Authentication | ✅ Done | Passwordless login via [SimpleWebAuthn](https://simplewebauthn.dev/) — phishing-resistant, no passwords to leak |
+| 📧 Email + Password Login | ✅ Done | Alternative to passkeys, with SMTP verification and password reset. Accounts can hold both and link either way |
+| 🔒 Two-Factor Authentication | ✅ Done | TOTP (Authy, Google/Microsoft Authenticator, 1Password, Apple Passwords) or emailed 6-digit codes, with single-use recovery codes. Offered for password logins — passkeys already are multi-factor |
+| 👋 Guided Onboarding | ✅ Done | A six-step first-run walkthrough of chat, the proxy, trace import, privacy and account security — skippable, replayable |
 | 💬 Browser Chat | ✅ Done | Streaming chat with image upload, Markdown + math (KaTeX), and a collapsible reasoning/"thinking" view |
 | 🗂️ Conversation History | ✅ Done | Sidebar of past chats — resume any conversation and follow-up turns append to it |
 | 🔀 On-the-fly Model Switching | ✅ Done | Pick any model from your endpoint's `/v1/models` per message |
 | 🔌 BYOE (Bring Your Own Endpoint) | ✅ Done | Add any OpenAI v1-compatible endpoint (key optional for local servers) — donate interaction data **and** compute |
 | 🛰️ V1 Proxy for External Tools | ✅ Done | A personal API key + OpenAI-compatible endpoint so VS Code Copilot, opencode, Claude Code, etc. route through the logging proxy |
 | 🧩 "Add to VS Code" | ✅ Done | One-click setup helper that lists your models and walks through the secure VS Code custom-endpoint flow |
-| 📥 Local Trace Import | ✅ Done | Import existing agent sessions — Claude Code, VS Code Copilot Chat, and OpenCode (SQLite) — with local parsing, preview & per-conversation select |
-| 🛡️ On-Device PII Redaction | ✅ Done | Redact names/emails/phones/etc. locally with [`openai/privacy-filter`](https://huggingface.co/openai/privacy-filter) via [Transformers.js](https://github.com/huggingface/transformers.js) (WebGPU/WASM) — in chat and before trace upload |
+| 📥 Local Trace Import | ✅ Done | Import existing agent sessions — Claude Code, VS Code Copilot Chat, OpenCode, Codex CLI and Google Antigravity — with local parsing, preview & per-conversation select |
+| 🛡️ On-Device PII Redaction | ✅ Done | Redact names/emails/phones/etc. locally via [Transformers.js](https://github.com/huggingface/transformers.js) (WebGPU/WASM) — in chat and before trace upload. Defaults to the lightweight [`rampart`](https://huggingface.co/nationaldesignstudio/rampart) model (~15 MB); [`openai/privacy-filter`](https://huggingface.co/openai/privacy-filter) selectable in Settings |
 | 📦 My Uploads | ✅ Done | Per-user view of your contributions (Chat / V1 Proxy / Local traces) with preview and delete |
 | 🛡️ Admin Dashboard | ✅ Done | Users + conversations with category filters and pagination |
 | 🌗 Theme Toggle | ✅ Done | System → dark → light |
@@ -137,10 +140,36 @@ The dev server starts at `http://localhost:3000` with hot module reloading.
 
 ### Production deployment
 
-Two equivalent options, both running Caddy (automatic HTTPS) → frontend → backend with all state bind-mounted under `./data`:
+All options run Caddy (automatic HTTPS) → frontend → backend, with every piece of
+state bind-mounted under `data/` — no named volumes, nothing to lose on a rebuild.
 
-- **Docker Compose** — `docker compose up -d --build` (see [`docker-compose.yml`](docker-compose.yml), configured via `.env` + `frontend.env`).
-- **Podman quadlets** — systemd-native units in [`quadlet/`](quadlet/README.md); same layout and env files, managed with `systemctl`.
+| Option | Use when | Command |
+|---|---|---|
+| **Docker Compose** | Docker is available | `docker compose up -d --build` |
+| **Podman quadlets** | Podman **≥ 4.4** (quadlet ships with it) | [`deploy/install-quadlet.sh`](deploy/install-quadlet.sh) |
+| **Podman rootless** | Older podman, or a kernel without `CONFIG_CGROUP_BPF` | [`deploy/install-rootless.sh`](deploy/install-rootless.sh) |
+
+Configuration lives in `.env` (DOMAIN, ACME_EMAIL, ALLOWED_HOSTS, SMTP) and
+`frontend.env` (JWT_SECRET, FEEDBACK_TOKEN). Two requirements are enforced at
+startup rather than failing mysteriously later:
+
+- **`JWT_SECRET` must be set in production.** The development fallback is
+  published in this repo, so sessions signed with it would be forgeable. Generate
+  one with `openssl rand -base64 48`.
+- **`ALLOWED_HOSTS` must equal your domain.** It is the WebAuthn relying-party id;
+  a mismatch breaks passkey login. Compose expands `${DOMAIN}` for you, but systemd
+  does not, so set it explicitly.
+
+#### Pushing an update
+
+From a checkout, [`deploy.sh`](deploy.sh) runs the tests, syncs the tree, rebuilds
+and restarts on the server, and verifies the live site — aborting if any step
+fails. Databases are never in the sync path.
+
+```sh
+bash deploy.sh              # test, sync, rebuild, restart, verify
+bash deploy.sh --skip-tests # skip the local test gate
+```
 
 ---
 

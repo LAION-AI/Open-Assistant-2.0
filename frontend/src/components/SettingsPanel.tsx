@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/
 import { Server, Key, Brain, CheckCircle, HelpCircle, RefreshCw, Copy, Check, Trash2, Network, Code2, Download, Loader2, Trophy, Eye, EyeOff, Terminal } from "lucide-react";
 import { LoginMethods } from "./LoginMethods";
 import { RedactionSettings } from "./RedactionSettings";
+import { TwoFactorSettings } from "./TwoFactorSettings";
 
 interface User {
   id: string;
@@ -19,6 +20,10 @@ interface User {
   emailVerified?: number;
   hasPassword?: boolean;
   hasPasskey?: boolean;
+  twoFactorEnabled?: boolean;
+  twoFactorMethod?: string | null;
+  backupCodesRemaining?: number;
+  onboarded?: boolean;
   showInLeaderboard?: number;
   isAdmin: number;
 }
@@ -40,6 +45,27 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
   const [fetchingModels, setFetchingModels] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // The email 2FA method needs working SMTP; hide it when the server has none.
+  const [emailAvailable, setEmailAvailable] = useState(false);
+  useEffect(() => {
+    fetch("/api/auth/email/status")
+      .then(r => r.json())
+      .then(d => setEmailAvailable(!!d.emailVerification))
+      .catch(() => {});
+  }, []);
+
+  // Pull the authoritative user record after a security change, so flags like
+  // twoFactorEnabled / backupCodesRemaining reflect the server, not a guess.
+  const refreshUser = async () => {
+    try {
+      const r = await fetch("/api/auth/me");
+      if (r.ok) {
+        const d = await r.json();
+        if (d.user) onUpdateUser(d.user);
+      }
+    } catch {}
+  };
 
   // Data-collection proxy API key. Only the hash is stored server-side, so the
   // plaintext is only ever held here transiently right after (re)generation;
@@ -258,6 +284,12 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
   return (
     <div className="space-y-6 max-w-xl mx-auto">
     <LoginMethods user={user} onUpdateUser={onUpdateUser} />
+
+    {/* Anchor target for the "Set up 2FA" banner link. */}
+    <div id="two-factor" className="scroll-mt-24">
+      <TwoFactorSettings user={user} emailAvailable={emailAvailable} onUpdated={refreshUser} />
+    </div>
+
     <RedactionSettings />
        {/* Sub-tab selection pills */}
     <div className="flex rounded-xl bg-background/50 border border-border/60 p-1.5 gap-1.5 animate-fade-in">

@@ -2,9 +2,9 @@ import { useState, type FormEvent } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { Mail, Lock, User as UserIcon, Loader2, CheckCircle, AlertCircle, ArrowLeft } from "lucide-react";
+import { Mail, Lock, User as UserIcon, Loader2, CheckCircle, AlertCircle, ArrowLeft, ShieldCheck, Smartphone } from "lucide-react";
 
-type Mode = "menu" | "login" | "register" | "forgot" | "reset";
+type Mode = "menu" | "login" | "register" | "forgot" | "reset" | "2fa";
 
 // Reset links land on /?reset=<token>; show the reset form when present.
 function resetTokenFromUrl(): string | null {
@@ -21,6 +21,11 @@ export function EmailAuth({ onAuthed }: { onAuthed: (user: any) => void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Second-factor step: the challenge stands in for a session until the code
+  // checks out, so nothing is signed in while it is pending.
+  const [challenge, setChallenge] = useState<string | null>(null);
+  const [twoFaMethod, setTwoFaMethod] = useState<"totp" | "email">("totp");
+  const [code, setCode] = useState("");
 
   const reset = (m: Mode) => {
     setMode(m);
@@ -45,7 +50,13 @@ export function EmailAuth({ onAuthed }: { onAuthed: (user: any) => void }) {
   const doLogin = async (e: FormEvent) => {
     e.preventDefault();
     const { ok, data } = await post("/api/auth/email/login", { email, password });
-    if (ok) onAuthed(data.user);
+    if (ok && data.twoFactorRequired) {
+      setChallenge(data.challenge);
+      setTwoFaMethod(data.method === "email" ? "email" : "totp");
+      setPassword("");
+      setCode("");
+      setMode("2fa");
+    } else if (ok) onAuthed(data.user);
     else if (data.needsVerification) {
       setError("Please verify your email — check your inbox.");
       setNotice("resend");
@@ -76,6 +87,18 @@ export function EmailAuth({ onAuthed }: { onAuthed: (user: any) => void }) {
       window.history.replaceState({}, "", window.location.pathname);
       onAuthed(data.user);
     } else setError(data.error || "Reset failed");
+  };
+
+  const doTwoFactor = async (e: FormEvent) => {
+    e.preventDefault();
+    const { ok, data } = await post("/api/auth/2fa/verify", { challenge, code });
+    if (ok) onAuthed(data.user);
+    else setError(data.error || "Verification failed");
+  };
+
+  const resendCode = async () => {
+    await post("/api/auth/2fa/resend", { challenge });
+    setNotice("A new code is on its way.");
   };
 
   const resend = async () => {
@@ -141,6 +164,64 @@ export function EmailAuth({ onAuthed }: { onAuthed: (user: any) => void }) {
         {fieldPassword("New password", "new-password")}
         {alerts}
         {submitBtn("Set new password & sign in")}
+      </form>
+    );
+  }
+
+  // Second factor. Takes over the panel so there's one obvious thing to do.
+  if (mode === "2fa") {
+    return (
+      <form onSubmit={doTwoFactor} className="space-y-3">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <ShieldCheck className="w-4 h-4 text-emerald-400" />
+          <span>Two-factor verification</span>
+        </div>
+        <p className="text-xs text-muted-foreground leading-relaxed flex items-start gap-1.5">
+          {twoFaMethod === "totp" ? (
+            <>
+              <Smartphone className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              Enter the 6-digit code from your authenticator app.
+            </>
+          ) : (
+            <>
+              <Mail className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              We emailed a 6-digit code to {email}. It expires in 10 minutes.
+            </>
+          )}
+        </p>
+        <Input
+          value={code}
+          onChange={e => setCode(e.target.value.replace(/[^0-9a-zA-Z-]/g, "").slice(0, 11))}
+          placeholder="000000"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          autoFocus
+          required
+          className="h-12 rounded-xl font-mono tracking-[0.4em] text-center text-lg"
+        />
+        {alerts}
+        {submitBtn("Verify & sign in")}
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => {
+              setChallenge(null);
+              setCode("");
+              reset("login");
+            }}
+            className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+          >
+            <ArrowLeft className="w-3 h-3" /> Back
+          </button>
+          {twoFaMethod === "email" && (
+            <button type="button" onClick={resendCode} className="text-[11px] text-indigo-400 hover:underline">
+              Send a new code
+            </button>
+          )}
+        </div>
+        <p className="text-[10px] text-muted-foreground/70 text-center leading-relaxed">
+          Lost your device? Enter one of your recovery codes above instead.
+        </p>
       </form>
     );
   }

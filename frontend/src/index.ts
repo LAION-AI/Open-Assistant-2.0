@@ -21,12 +21,28 @@ import {
   verifyChallengeToken,
   createEmailActionToken,
   verifyEmailActionToken,
+  createTwoFactorChallengeToken,
+  verifyTwoFactorChallengeToken,
 } from "./lib/session";
 import { parseCookies, serializeCookie } from "./lib/cookies";
 import { buildStoredPayload, type SourceEnvelope } from "./lib/unified";
 import { parseCrushDb, parseHermesDb } from "./lib/tracedb";
-import { emailEnabled, sendVerificationEmail, sendPasswordResetEmail } from "./lib/email";
+import { emailEnabled, sendVerificationEmail, sendPasswordResetEmail, sendTwoFactorCodeEmail } from "./lib/email";
+import {
+  generateTotpSecret,
+  verifyTotp,
+  otpauthUrl,
+  formatSecretForDisplay,
+  generateBackupCodes,
+  hashBackupCode,
+  consumeBackupCode,
+} from "./lib/totp";
+import QRCode from "qrcode";
+import { rateLimit, clearRateLimit, clientIp } from "./lib/ratelimit";
 import indexHtml from "./index.html";
+import pkg from "../package.json" with { type: "json" };
+
+export const APP_VERSION: string = pkg.version;
 
 const RP_NAME = "Open Assistant 2.0";
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
@@ -503,13 +519,30 @@ async function proxyChatCompletion(
 
 // --- Session helpers (shared by passkey + email auth) ----------------------
 const SESSION_MAX_AGE = 7 * 24 * 3600;
-function sessionSetCookie(token: string) {
-  return serializeCookie("session", token, { httpOnly: true, secure: false, path: "/", maxAge: SESSION_MAX_AGE });
+// True when the browser is talking HTTPS. The server sits behind a
+// TLS-terminating proxy, so its own url.protocol is always http — the forwarded
+// header is the only accurate signal.
+function isHttps(req: Request): boolean {
+  const fwd = (req.headers.get("x-forwarded-proto") || "").split(",")[0]?.trim();
+  if (fwd) return fwd === "https";
+  return new URL(req.url).protocol === "https:";
 }
-async function loginResponse(user: { id: string; username: string }, body: any) {
+
+// SameSite=Lax blocks the cookie on cross-site POSTs (CSRF) while keeping
+// ordinary top-level navigation into the app working.
+function sessionSetCookie(token: string, req?: Request) {
+  return serializeCookie("session", token, {
+    httpOnly: true,
+    secure: req ? isHttps(req) : false,
+    sameSite: "Lax",
+    path: "/",
+    maxAge: SESSION_MAX_AGE,
+  });
+}
+async function loginResponse(user: { id: string; username: string }, body: any, req?: Request) {
   const token = await createSessionToken({ userId: user.id, username: user.username });
   const headers = new Headers({ "Content-Type": "application/json" });
-  headers.append("Set-Cookie", sessionSetCookie(token));
+  headers.append("Set-Cookie", sessionSetCookie(token, req));
   return new Response(JSON.stringify(body), { headers });
 }
 
@@ -575,12 +608,98 @@ function hashApiKey(raw: string): string {
   return createHash("sha256").update(raw.trim()).digest("hex");
 }
 
-// Never send secret credentials (password hash, API-key hash) to the browser —
-// expose booleans instead. Use wherever a full user record is returned to a client.
+// Never send secret credentials (password hash, API-key hash, TOTP secret,
+// recovery-code hashes) to the browser — expose booleans instead. Use wherever
+// a full user record is returned to a client.
 function clientUser(user: any, extra: Record<string, unknown> = {}) {
   if (!user) return user;
-  const { passwordHash, apiKey, ...safe } = user;
-  return { ...safe, hasPassword: !!passwordHash, hasApiKey: !!apiKey, ...extra };
+  const { passwordHash, apiKey, totpSecret, backupCodes, ...safe } = user;
+  let backupCodesRemaining = 0;
+  try {
+    backupCodesRemaining = backupCodes ? (JSON.parse(backupCodes) as string[]).length : 0;
+  } catch {}
+  return {
+    ...safe,
+    hasPassword: !!passwordHash,
+    hasApiKey: !!apiKey,
+    twoFactorEnabled: !!user.twofaMethod,
+    twoFactorMethod: user.twofaMethod ?? null,
+    backupCodesRemaining,
+    onboarded: !!user.onboardedAt,
+    ...extra,
+  };
+}
+
+// --- Two-factor auth -------------------------------------------------------
+// 2FA applies only to password logins. Passkeys are already phishing-resistant
+// and hardware-bound, so a second factor there would add friction, not safety.
+
+function tooManyAttempts(retryAfterSec: number) {
+  return Response.json(
+    { error: `Too many attempts. Try again in ${Math.ceil(retryAfterSec / 60)} minute(s).` },
+    { status: 429, headers: { "Retry-After": String(retryAfterSec) } },
+  );
+}
+
+const OTP_TTL_MS = 10 * 60 * 1000;
+const OTP_MAX_ATTEMPTS = 5;
+
+function sixDigitCode(): string {
+  // Rejection-free: 6 bytes -> uniform enough for a short-lived, rate-limited code.
+  return String(Math.floor(crypto.getRandomValues(new Uint32Array(1))[0]! % 1_000_000)).padStart(6, "0");
+}
+
+async function issueEmailOtp(user: any): Promise<boolean> {
+  if (!user?.email) return false;
+  const code = sixDigitCode();
+  await dbAdapter.savePendingOtp(user.id, hashBackupCode(code), Date.now() + OTP_TTL_MS);
+  return sendTwoFactorCodeEmail(user.email, code, OTP_TTL_MS / 60000);
+}
+
+/**
+ * Validate a second factor. Recovery codes are accepted for both methods, since
+ * they exist precisely for when the primary factor is unavailable.
+ * Returns null on success, or a user-facing error message.
+ */
+async function checkSecondFactor(user: any, code: string): Promise<string | null> {
+  const submitted = (code || "").trim();
+  if (!submitted) return "Enter your verification code";
+
+  // Recovery code path (single use).
+  const storedHashes: string[] = user.backupCodes ? JSON.parse(user.backupCodes) : [];
+  if (storedHashes.length) {
+    const remaining = consumeBackupCode(storedHashes, submitted);
+    if (remaining) {
+      await dbAdapter.setBackupCodes(user.id, remaining);
+      return null;
+    }
+  }
+
+  if (user.twofaMethod === "totp") {
+    if (!user.totpSecret) return "Two-factor is misconfigured — use a recovery code";
+    return verifyTotp(user.totpSecret, submitted) ? null : "That code isn't right — check your authenticator app";
+  }
+
+  if (user.twofaMethod === "email") {
+    const pending = await dbAdapter.getPendingOtp(user.id);
+    if (!pending) return "That code has expired — request a new one";
+    if (pending.expiresAt < Date.now()) {
+      await dbAdapter.clearPendingOtp(user.id);
+      return "That code has expired — request a new one";
+    }
+    if (pending.attempts >= OTP_MAX_ATTEMPTS) {
+      await dbAdapter.clearPendingOtp(user.id);
+      return "Too many attempts — request a new code";
+    }
+    if (pending.codeHash === hashBackupCode(submitted)) {
+      await dbAdapter.clearPendingOtp(user.id);
+      return null;
+    }
+    await dbAdapter.bumpOtpAttempts(user.id);
+    return "That code isn't right — check your email";
+  }
+
+  return "Two-factor is not enabled for this account";
 }
 
 // Resolve a user from an `Authorization: Bearer <api key>` header.
@@ -605,6 +724,11 @@ const server = serve({
   routes: {
     // Serve index.html for UI pages (Single Page App routing)
     "/*": indexHtml,
+
+    // Version + liveness. Unauthenticated by design so a deploy can confirm the
+    // new build is actually serving, not merely that something responds.
+    "/api/health": async () =>
+      Response.json({ ok: true, name: "open-assistant-2", version: APP_VERSION }),
 
     // Get current authenticated user
     "/api/auth/me": async req => {
@@ -656,7 +780,7 @@ const server = serve({
         }
         // No SMTP configured — auto-verify and sign in.
         await dbAdapter.setEmailVerified(user.id, true);
-        return loginResponse(user, { success: true, verified: true, user: { id: user.id, username: user.username } });
+        return loginResponse(user, { success: true, verified: true, user: { id: user.id, username: user.username } }, req);
       } catch (err: any) {
         console.error("email register error:", err);
         return Response.json({ error: err.message }, { status: 500 });
@@ -674,7 +798,7 @@ const server = serve({
       const user = await dbAdapter.getUser(payload.userId);
       const headers = new Headers({ Location: "/?verified=1" });
       if (user) {
-        headers.append("Set-Cookie", sessionSetCookie(await createSessionToken({ userId: user.id, username: user.username })));
+        headers.append("Set-Cookie", sessionSetCookie(await createSessionToken({ userId: user.id, username: user.username }), req));
       }
       return new Response(null, { status: 303, headers });
     },
@@ -683,16 +807,77 @@ const server = serve({
       try {
         if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
         const { email, password } = await req.json();
-        const user = await dbAdapter.getUserByEmail((email || "").trim().toLowerCase());
+        const normalized = (email || "").trim().toLowerCase();
+        // Throttle both the account and the origin, so neither a targeted
+        // guessing run nor a spray across many accounts is cheap.
+        const byAccount = rateLimit(`login:acct:${normalized}`, 10, 15 * 60_000);
+        const byIp = rateLimit(`login:ip:${clientIp(req)}`, 30, 15 * 60_000);
+        if (!byAccount.allowed) return tooManyAttempts(byAccount.retryAfterSec);
+        if (!byIp.allowed) return tooManyAttempts(byIp.retryAfterSec);
+
+        const user = await dbAdapter.getUserByEmail(normalized);
         if (!user || !user.passwordHash || !(await Bun.password.verify(password || "", user.passwordHash))) {
           return Response.json({ error: "Invalid email or password" }, { status: 401 });
         }
+        clearRateLimit(`login:acct:${normalized}`);
         if (emailEnabled && !user.emailVerified) {
           return Response.json({ error: "Please verify your email first", needsVerification: true }, { status: 403 });
         }
-        return loginResponse(user, { success: true, user: { id: user.id, username: user.username } });
+        // Password was correct but a second factor is owed: hand back a signed
+        // challenge instead of a session, so no cookie exists until 2FA passes.
+        if (user.twofaMethod) {
+          if (user.twofaMethod === "email") await issueEmailOtp(user);
+          return Response.json({
+            twoFactorRequired: true,
+            method: user.twofaMethod,
+            challenge: await createTwoFactorChallengeToken({ userId: user.id, method: user.twofaMethod }),
+          });
+        }
+        return loginResponse(user, { success: true, user: { id: user.id, username: user.username } }, req);
       } catch (err: any) {
         console.error("email login error:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Complete a password login by presenting the second factor.
+    "/api/auth/2fa/verify": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const { challenge, code } = await req.json();
+        const payload = await verifyTwoFactorChallengeToken(challenge || "");
+        if (!payload) return Response.json({ error: "This sign-in attempt expired — start again" }, { status: 401 });
+        const user = await dbAdapter.getUser(payload.userId);
+        if (!user) return Response.json({ error: "Account not found" }, { status: 404 });
+
+        // The challenge lives for 10 minutes; unlimited guesses inside that
+        // window would make a 6-digit code trivially brute-forceable.
+        const limit = rateLimit(`2fa:${user.id}`, 8, 10 * 60_000);
+        if (!limit.allowed) return tooManyAttempts(limit.retryAfterSec);
+
+        const failure = await checkSecondFactor(user, code);
+        if (failure) return Response.json({ error: failure }, { status: 401 });
+        clearRateLimit(`2fa:${user.id}`);
+
+        return loginResponse(user, { success: true, user: { id: user.id, username: user.username } }, req);
+      } catch (err: any) {
+        console.error("2fa verify error:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Re-send an email 2FA code mid-login (challenge proves the password step).
+    "/api/auth/2fa/resend": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const { challenge } = await req.json();
+        const payload = await verifyTwoFactorChallengeToken(challenge || "");
+        if (!payload) return Response.json({ error: "This sign-in attempt expired — start again" }, { status: 401 });
+        const user = await dbAdapter.getUser(payload.userId);
+        if (!user || user.twofaMethod !== "email") return Response.json({ error: "Not applicable" }, { status: 400 });
+        await issueEmailOtp(user);
+        return Response.json({ success: true });
+      } catch (err: any) {
         return Response.json({ error: err.message }, { status: 500 });
       }
     },
@@ -738,7 +923,7 @@ const server = serve({
         await dbAdapter.setEmailVerified(payload.userId, true);
         const user = await dbAdapter.getUser(payload.userId);
         if (!user) return Response.json({ error: "User not found" }, { status: 404 });
-        return loginResponse(user, { success: true, user: { id: user.id, username: user.username } });
+        return loginResponse(user, { success: true, user: { id: user.id, username: user.username } }, req);
       } catch (err: any) {
         console.error("email reset error:", err);
         return Response.json({ error: err.message }, { status: 500 });
@@ -786,6 +971,158 @@ const server = serve({
     },
 
     // Add a passkey to the current account — registration options.
+    // --- Two-factor management (signed-in user) ----------------------------
+
+    // Begin TOTP enrolment: mint a secret and return it plus a QR to scan. The
+    // secret is stored but stays inactive until a code confirms it below, so an
+    // abandoned setup can never lock anyone out.
+    "/api/user/2fa/totp/setup": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const user = await userFromSession(req);
+        if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        if (!user.passwordHash) {
+          return Response.json({ error: "Two-factor applies to password logins; your account uses a passkey" }, { status: 400 });
+        }
+        const secret = generateTotpSecret();
+        // Keep any existing method active until the new one is confirmed.
+        await dbAdapter.setTwoFactor(user.id, {
+          method: (user.twofaMethod as any) ?? null,
+          totpSecret: secret,
+          backupCodes: user.backupCodes ? JSON.parse(user.backupCodes) : null,
+        });
+        const url = otpauthUrl(secret, user.email || user.username);
+        const qrSvg = await QRCode.toString(url, { type: "svg", margin: 1, width: 200 });
+        return Response.json({ secret, formatted: formatSecretForDisplay(secret), otpauthUrl: url, qrSvg });
+      } catch (err: any) {
+        console.error("totp setup error:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Confirm the authenticator works, activate TOTP, and issue recovery codes.
+    "/api/user/2fa/totp/enable": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const user = await userFromSession(req);
+        if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        if (!user.totpSecret) return Response.json({ error: "Start setup first" }, { status: 400 });
+        const { code } = await req.json();
+        if (!verifyTotp(user.totpSecret, (code || "").trim())) {
+          return Response.json({ error: "That code isn't right — check your authenticator app" }, { status: 400 });
+        }
+        const codes = generateBackupCodes(10);
+        await dbAdapter.setTwoFactor(user.id, {
+          method: "totp",
+          totpSecret: user.totpSecret,
+          backupCodes: codes.map(hashBackupCode),
+        });
+        // Plaintext codes are returned exactly once and never stored.
+        return Response.json({ success: true, backupCodes: codes });
+      } catch (err: any) {
+        console.error("totp enable error:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Enable the email method by proving receipt of a code (same as sign-in).
+    "/api/user/2fa/email/start": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const user = await userFromSession(req);
+        if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        if (!user.passwordHash) {
+          return Response.json({ error: "Two-factor applies to password logins; your account uses a passkey" }, { status: 400 });
+        }
+        if (!emailEnabled) return Response.json({ error: "Email delivery isn't configured on this server" }, { status: 400 });
+        if (!user.email) return Response.json({ error: "Add an email address first" }, { status: 400 });
+        await issueEmailOtp(user);
+        return Response.json({ success: true, sentTo: user.email });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    "/api/user/2fa/email/enable": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const user = await userFromSession(req);
+        if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const { code } = await req.json();
+        const pending = await dbAdapter.getPendingOtp(user.id);
+        if (!pending || pending.expiresAt < Date.now()) {
+          return Response.json({ error: "That code has expired — send a new one" }, { status: 400 });
+        }
+        if (pending.attempts >= OTP_MAX_ATTEMPTS) {
+          await dbAdapter.clearPendingOtp(user.id);
+          return Response.json({ error: "Too many attempts — send a new code" }, { status: 429 });
+        }
+        if (pending.codeHash !== hashBackupCode((code || "").trim())) {
+          await dbAdapter.bumpOtpAttempts(user.id);
+          return Response.json({ error: "That code isn't right — check your email" }, { status: 400 });
+        }
+        await dbAdapter.clearPendingOtp(user.id);
+        const codes = generateBackupCodes(10);
+        await dbAdapter.setTwoFactor(user.id, { method: "email", totpSecret: null, backupCodes: codes.map(hashBackupCode) });
+        return Response.json({ success: true, backupCodes: codes });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Turning 2FA off is a security downgrade, so require the password again.
+    "/api/user/2fa/disable": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const user = await userFromSession(req);
+        if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const { password } = await req.json();
+        if (!user.passwordHash || !(await Bun.password.verify(password || "", user.passwordHash))) {
+          return Response.json({ error: "Password is incorrect" }, { status: 401 });
+        }
+        await dbAdapter.setTwoFactor(user.id, { method: null, totpSecret: null, backupCodes: null });
+        await dbAdapter.clearPendingOtp(user.id);
+        return Response.json({ success: true });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Replace recovery codes (invalidates the old set).
+    "/api/user/2fa/backup-codes": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const user = await userFromSession(req);
+        if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        if (!user.twofaMethod) return Response.json({ error: "Two-factor is not enabled" }, { status: 400 });
+        const { password } = await req.json();
+        if (!user.passwordHash || !(await Bun.password.verify(password || "", user.passwordHash))) {
+          return Response.json({ error: "Password is incorrect" }, { status: 401 });
+        }
+        const codes = generateBackupCodes(10);
+        await dbAdapter.setBackupCodes(user.id, codes.map(hashBackupCode));
+        return Response.json({ success: true, backupCodes: codes });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // --- Onboarding --------------------------------------------------------
+    // Stored server-side so the flow doesn't reappear on every new device, and
+    // so "replay onboarding" from Settings works the same way everywhere.
+    "/api/user/onboarded": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const user = await userFromSession(req);
+        if (!user) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const { done } = await req.json().catch(() => ({ done: true }));
+        await dbAdapter.setOnboardedAt(user.id, done === false ? null : Date.now());
+        return Response.json({ success: true });
+      } catch (err: any) {
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
     "/api/auth/passkey/add/options": async req => {
       try {
         const user = await userFromSession(req);
@@ -806,7 +1143,7 @@ const server = serve({
         return new Response(JSON.stringify(options), {
           headers: {
             "Content-Type": "application/json",
-            "Set-Cookie": serializeCookie("challenge_token", challengeToken, { httpOnly: true, secure: false, path: "/", maxAge: 300 }),
+            "Set-Cookie": serializeCookie("challenge_token", challengeToken, { httpOnly: true, secure: isHttps(req), sameSite: "Lax", path: "/", maxAge: 300 }),
           },
         });
       } catch (err: any) {
@@ -859,7 +1196,7 @@ const server = serve({
         return new Response(JSON.stringify({ success: true }), {
           headers: {
             "Content-Type": "application/json",
-            "Set-Cookie": serializeCookie("challenge_token", "", { httpOnly: true, secure: false, path: "/", maxAge: 0 }),
+            "Set-Cookie": serializeCookie("challenge_token", "", { httpOnly: true, secure: isHttps(req), sameSite: "Lax", path: "/", maxAge: 0 }),
           },
         });
       } catch (err: any) {
@@ -875,7 +1212,8 @@ const server = serve({
           "Content-Type": "application/json",
           "Set-Cookie": serializeCookie("session", "", {
             httpOnly: true,
-            secure: false,
+            secure: isHttps(req),
+            sameSite: "Lax",
             path: "/",
             maxAge: 0,
           }),
@@ -930,7 +1268,8 @@ const server = serve({
             "Content-Type": "application/json",
             "Set-Cookie": serializeCookie("challenge_token", challengeToken, {
               httpOnly: true,
-              secure: false,
+              secure: isHttps(req),
+              sameSite: "Lax",
               path: "/",
               maxAge: 300, // 5 minutes
             }),
@@ -1037,13 +1376,15 @@ const server = serve({
         headers.append("Content-Type", "application/json");
         headers.append("Set-Cookie", serializeCookie("session", sessionToken, {
           httpOnly: true,
-          secure: false,
+          secure: isHttps(req),
+          sameSite: "Lax",
           path: "/",
           maxAge: 7 * 24 * 3600, // 7 days
         }));
         headers.append("Set-Cookie", serializeCookie("challenge_token", "", {
           httpOnly: true,
-          secure: false,
+          secure: isHttps(req),
+          sameSite: "Lax",
           path: "/",
           maxAge: 0,
         }));
@@ -1076,7 +1417,8 @@ const server = serve({
             "Content-Type": "application/json",
             "Set-Cookie": serializeCookie("challenge_token", challengeToken, {
               httpOnly: true,
-              secure: false,
+              secure: isHttps(req),
+              sameSite: "Lax",
               path: "/",
               maxAge: 300, // 5 minutes
             }),
@@ -1152,13 +1494,15 @@ const server = serve({
         headers.append("Content-Type", "application/json");
         headers.append("Set-Cookie", serializeCookie("session", sessionToken, {
           httpOnly: true,
-          secure: false,
+          secure: isHttps(req),
+          sameSite: "Lax",
           path: "/",
           maxAge: 7 * 24 * 3600, // 7 days
         }));
         headers.append("Set-Cookie", serializeCookie("challenge_token", "", {
           httpOnly: true,
-          secure: false,
+          secure: isHttps(req),
+          sameSite: "Lax",
           path: "/",
           maxAge: 0,
         }));

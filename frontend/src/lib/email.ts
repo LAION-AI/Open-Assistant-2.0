@@ -66,3 +66,15 @@ export async function sendPasswordResetEmail(to: string, link: string) {
     `Reset your password: ${link}`,
   );
 }
+
+/** Six-digit sign-in code for the email two-factor method. */
+export async function sendTwoFactorCodeEmail(to: string, code: string, minutes: number) {
+  const html = `<!doctype html><html><body style="font-family:system-ui,sans-serif;background:#0a0a0a;color:#e5e5e5;padding:24px">
+  <div style="max-width:480px;margin:0 auto;background:#161616;border:1px solid #262626;border-radius:16px;padding:28px">
+    <h2 style="margin:0 0 12px;color:#fff">Your sign-in code</h2>
+    <p style="color:#a3a3a3;line-height:1.6;margin:0 0 20px">Enter this code to finish signing in. It expires in ${minutes} minutes.</p>
+    <div style="font-size:32px;font-weight:700;letter-spacing:8px;color:#fff;background:#0a0a0a;border:1px solid #262626;border-radius:12px;padding:16px;text-align:center">${code}</div>
+    <p style="color:#737373;font-size:12px;line-height:1.6;margin:20px 0 0">If you didn't try to sign in, someone may know your password — change it right away.</p>
+  </div></body></html>`;
+  return send(to, `${code} is your Open Assistant sign-in code`, html, `Your sign-in code is ${code}. It expires in ${minutes} minutes.`);
+}

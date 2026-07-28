@@ -114,7 +114,6 @@ func (h *ProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Warning: failed to parse request payload: %v", err)
 	}
 
-
 	isV1Beta := strings.Contains(r.URL.Path, "v1beta")
 
 	// Determine upstream URL and API Key
@@ -453,5 +452,3 @@ func handleNonStream(w http.ResponseWriter, body io.Reader, repo db.LogRepositor
 		}
 	}()
 }
-
-

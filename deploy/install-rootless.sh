@@ -68,10 +68,51 @@ done
 grep -q '^ALLOWED_HOSTS=' "$APP_DIR/.env" \
   || { echo "ERROR: .env must set ALLOWED_HOSTS (WebAuthn RP id)"; exit 1; }
 
+# Rootless podman stores images under $HOME by default. Here $HOME lives on a
+# small RAM-backed overlay, and because overlay-on-overlay isn't supported podman
+# falls back to the `vfs` driver, which copies every layer in full — two builds
+# are enough to fill the disk. Point storage at the ZFS pool instead: terabytes
+# free, and it survives the reboots that wipe $HOME.
+#
+# (fuse-overlayfs would be more space-efficient than vfs, but podman refuses
+# `overlay` over zfs without a mount_program and the driver choice is pinned in
+# libpod's database, so switching it means tearing the stack down. Not worth it
+# when the pool has 2 TB free.)
+ensure_container_storage() {
+  local conf="$HOME/.config/containers/storage.conf"
+  local want="$APP_DIR/containers"
+  if [[ -f "$conf" ]] && grep -qF "graphroot = \"$want\"" "$conf"; then return 0; fi
+
+  echo "==> Moving podman storage to $want (was ${HOME}/.local/share/containers)"
+  # Containers currently running are managed by the *old* storage; stop them
+  # before switching or podman loses track of them while they keep the ports.
+  systemctl --user stop container-caddy container-frontend container-backend 2>/dev/null || true
+  for c in caddy frontend backend; do podman rm -f "$c" >/dev/null 2>&1 || true; done
+
+  mkdir -p "$(dirname "$conf")" "$want"
+  cat > "$conf" <<EOF
+# Managed by deploy/install-rootless.sh
+[storage]
+driver = "vfs"
+graphroot = "$want"
+runroot = "/run/user/$(id -u)/containers"
+EOF
+  # Reclaim the old location so the root filesystem isn't left full. Layer files
+  # are owned by mapped subuids, so plain rm can't touch them — do it inside the
+  # user namespace. Never fatal: freeing space must not block the deploy.
+  podman unshare rm -rf "$HOME/.local/share/containers" 2>/dev/null || true
+  rm -rf "$HOME/.local/share/containers" 2>/dev/null || true
+}
+ensure_container_storage
+
 echo "==> Building images"
 podman build -t "$BE_IMAGE" "$APP_DIR/backend"
 podman build -t "$FE_IMAGE" "$APP_DIR/frontend"
 podman pull "$CADDY_IMAGE"
+
+# vfs keeps a full copy per layer, so untagged intermediates from previous
+# deploys add up quickly. Drop anything no longer referenced.
+podman image prune -f >/dev/null 2>&1 || true
 
 echo "==> Creating network"
 podman network exists open-assistant || podman network create open-assistant

@@ -8,6 +8,8 @@ import { HomePanel } from "./components/HomePanel";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { FeedbackButton } from "./components/FeedbackButton";
 import { EmailAuth } from "./components/EmailAuth";
+import { OnboardingFlow } from "./components/OnboardingFlow";
+import { SecurityBanner } from "./components/SecurityBanner";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
@@ -43,6 +45,10 @@ interface User {
   hasPasskey?: boolean;
   isAdmin: number;
   showInLeaderboard?: number;
+  twoFactorEnabled?: boolean;
+  twoFactorMethod?: string | null;
+  backupCodesRemaining?: number;
+  onboarded?: boolean;
 }
 
 export function App() {
@@ -55,6 +61,7 @@ export function App() {
   const [settingsSubTab, setSettingsSubTab] = useState<"byoe" | "v1proxy" | "pyproxy">("byoe");
   const [passkeySupported, setPasskeySupported] = useState(true);
   const [isRegistering, setIsRegistering] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   const fetchUser = async () => {
     try {
@@ -62,6 +69,7 @@ export function App() {
       if (res.ok) {
         const data = await res.json();
         setUser(data.user);
+        if (data.user && !data.user.onboarded) setShowOnboarding(true);
       } else {
         setUser(null);
       }
@@ -79,7 +87,27 @@ export function App() {
     });
   }, []);
 
+  const finishOnboarding = async () => {
+    setShowOnboarding(false);
+    try {
+      await fetch("/api/user/onboarded", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ done: true }),
+      });
+      setUser(u => (u ? { ...u, onboarded: true } : u));
+    } catch {
+      // Non-fatal: the flow is dismissed locally either way.
+    }
+  };
+
   const handleNavigate = (tab: string) => {
+    if (tab === "settings-security") {
+      setActiveTab("settings");
+      // Let Settings render before scrolling to the anchor.
+      setTimeout(() => document.getElementById("two-factor")?.scrollIntoView({ behavior: "smooth", block: "center" }), 80);
+      return;
+    }
     if (tab.startsWith("settings-")) {
       const sub = tab.substring(9) as "byoe" | "v1proxy" | "pyproxy";
       setActiveTab("settings");
@@ -349,6 +377,16 @@ export function App() {
           </div>
         </div>
       </header>
+
+      {/* Nudge password accounts without a second factor towards Settings. */}
+      <SecurityBanner user={user} onNavigate={handleNavigate} />
+
+      <OnboardingFlow
+        open={showOnboarding}
+        username={user.username}
+        onFinish={finishOnboarding}
+        onNavigate={handleNavigate}
+      />
 
       {/* Main Container — chat fills the viewport; other tabs scroll centered */}
       {activeTab === "chat" ? (

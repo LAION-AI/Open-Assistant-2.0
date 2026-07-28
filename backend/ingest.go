@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"backend/db"
@@ -20,13 +21,28 @@ import (
 // credStore is a read-only handle to the frontend-owned user.db, used solely to
 // verify programmatic API keys at the ingestion edge. The frontend remains the
 // single writer of user.db; this connection never writes.
-type credStore struct{ db *sql.DB }
+// The handle is opened lazily rather than at startup: on a fresh deployment the
+// backend can boot before the frontend has created user.db, and a one-shot open
+// at startup would leave /api/ingest permanently disabled until a restart.
+type credStore struct {
+	path string
+	mu   sync.Mutex
+	db   *sql.DB
+}
 
-func openCredStore(path string) (*credStore, error) {
+func newCredStore(path string) *credStore { return &credStore{path: path} }
+
+// handle returns the connection, opening it on first successful use.
+func (c *credStore) handle() (*sql.DB, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.db != nil {
+		return c.db, nil
+	}
 	// mode=ro guarantees the driver never writes. The frontend keeps user.db in
 	// WAL mode as the single writer; a read-only reader attaches to its live
 	// -wal/-shm sidecars while the frontend is running.
-	h, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)")
+	h, err := sql.Open("sqlite", "file:"+c.path+"?mode=ro&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, err
 	}
@@ -34,17 +50,32 @@ func openCredStore(path string) (*credStore, error) {
 		h.Close()
 		return nil, err
 	}
-	return &credStore{db: h}, nil
+	c.db = h
+	return c.db, nil
+}
+
+func (c *credStore) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.db == nil {
+		return nil
+	}
+	err := c.db.Close()
+	c.db = nil
+	return err
 }
 
 // userIDForKey returns the owning user id for a presented plaintext API key, or
 // ("", false) if unknown. Keys are stored as SHA-256 hex (matching the
 // frontend), so we hash before the lookup.
 func (c *credStore) userIDForKey(rawKey string) (string, bool) {
+	h, err := c.handle()
+	if err != nil {
+		return "", false
+	}
 	sum := sha256.Sum256([]byte(strings.TrimSpace(rawKey)))
 	var id string
-	err := c.db.QueryRow(`SELECT id FROM users WHERE api_key = ?`, hex.EncodeToString(sum[:])).Scan(&id)
-	if err != nil {
+	if err := h.QueryRow(`SELECT id FROM users WHERE api_key = ?`, hex.EncodeToString(sum[:])).Scan(&id); err != nil {
 		return "", false
 	}
 	return id, true
@@ -62,6 +93,12 @@ func makeIngestHandler(repo db.LogRepository, creds *credStore) http.HandlerFunc
 			return
 		}
 		if creds == nil {
+			http.Error(w, `{"error":"credential store unavailable"}`, http.StatusServiceUnavailable)
+			return
+		}
+		// Surface a retryable status if user.db still isn't readable, rather
+		// than reporting every key as invalid.
+		if _, err := creds.handle(); err != nil {
 			http.Error(w, `{"error":"credential store unavailable"}`, http.StatusServiceUnavailable)
 			return
 		}
@@ -128,4 +165,3 @@ func makeIngestHandler(repo db.LogRepository, creds *credStore) http.HandlerFunc
 		fmt.Fprintf(w, `{"saved":%d}`, saved)
 	}
 }
-

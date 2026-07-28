@@ -42,9 +42,24 @@ fi
 grep -E '^==> ' "$log" | sed 's/^==> /  - /' || true
 
 echo "==> Verifying https://$DOMAIN"
-code="$(curl -sS -o /dev/null -w '%{http_code}' "https://$DOMAIN/" || echo 000)"
+# The installer restarts the backend at the end, so Caddy can briefly 502.
+# Poll rather than judging the deploy on a single racy sample.
+code=000
+for _ in $(seq 1 15); do
+  code="$(curl -sS -o /dev/null -w '%{http_code}' "https://$DOMAIN/" || echo 000)"
+  [[ "$code" == "200" ]] && break
+  sleep 2
+done
 if [[ "$code" == "200" ]]; then
   echo "    OK — $DOMAIN returned 200"
+  # Confirm the *new* build is serving, not just that something answers.
+  want="$(grep -m1 '"version"' frontend/package.json | sed 's/.*"version": *"\([^"]*\)".*/\1/')"
+  got="$(curl -sS "https://$DOMAIN/api/health" | sed 's/.*"version":"\([^"]*\)".*/\1/' || echo '?')"
+  if [[ "$got" == "$want" ]]; then
+    echo "    OK — serving version $got"
+  else
+    echo "    WARNING: live version is '$got' but this tree is '$want'"
+  fi
 else
   echo "    WARNING: $DOMAIN returned $code"
   echo "    Logs: ssh $HOST 'journalctl --user -u container-caddy -n 50'"
