@@ -702,6 +702,45 @@ async function checkSecondFactor(user: any, code: string): Promise<string | null
   return "Two-factor is not enabled for this account";
 }
 
+// Per-user contribution rollup from the Go backend, plus the global totals
+// derived from it. Shared by the leaderboard and the README stats badges.
+type ContributionEntry = { userId: string; totalTokens: number; totalTraces: number };
+
+async function fetchContributionStats(): Promise<{
+  entries: ContributionEntry[];
+  tokens: number;
+  traces: number;
+  contributors: number;
+}> {
+  const res = await fetch(`${BACKEND_URL}/api/leaderboard`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch leaderboard from backend");
+  }
+  const data = await res.json();
+  const entries: ContributionEntry[] = data.leaderboard || [];
+  return {
+    entries,
+    tokens: entries.reduce((acc, e) => acc + e.totalTokens, 0),
+    traces: entries.reduce((acc, e) => acc + e.totalTraces, 0),
+    contributors: entries.length,
+  };
+}
+
+// Compact counts for badges: 1234 → "1.2k", 5_400_000 → "5.4M".
+function formatCount(n: number): string {
+  const units: [number, string][] = [
+    [1_000_000_000, "B"],
+    [1_000_000, "M"],
+    [1_000, "k"],
+  ];
+  for (const [size, suffix] of units) {
+    if (n >= size) {
+      return `${(n / size).toFixed(1).replace(/\.0$/, "")}${suffix}`;
+    }
+  }
+  return String(n);
+}
+
 // Resolve a user from an `Authorization: Bearer <api key>` header.
 async function userFromApiKey(req: Request): Promise<any | null> {
   const auth = req.headers.get("Authorization") || "";
@@ -1603,13 +1642,12 @@ const server = serve({
     "/api/leaderboard": async req => {
       try {
         // 1. Get aggregated stats from Go backend
-        const goRes = await fetch(`${BACKEND_URL}/api/leaderboard`);
-        if (!goRes.ok) {
-          throw new Error("Failed to fetch leaderboard from backend");
-        }
-        const goData = await goRes.json();
-        const statsEntries: { userId: string; totalTokens: number; totalTraces: number }[] =
-          goData.leaderboard || [];
+        const {
+          entries: statsEntries,
+          tokens: globalTokens,
+          traces: globalTraces,
+          contributors: globalContributors,
+        } = await fetchContributionStats();
 
         // 2. Get all users who opted in to leaderboard
         const allUsers = await db.select().from(users).all();
@@ -1629,15 +1667,44 @@ const server = serve({
             totalTraces: e.totalTraces,
           }));
 
-        const globalTokens = statsEntries.reduce((acc, e) => acc + e.totalTokens, 0);
-        const globalTraces = statsEntries.reduce((acc, e) => acc + e.totalTraces, 0);
-        const globalContributors = statsEntries.length;
-
         return Response.json({ leaderboard, globalTokens, globalTraces, globalContributors });
       } catch (err: any) {
         console.error("Error building leaderboard:", err);
         return Response.json({ error: err.message, leaderboard: [], globalTokens: 0, globalTraces: 0, globalContributors: 0 }, { status: 200 });
       }
+    },
+
+    // Shields.io endpoint badges for the README (schemaVersion 1). Public by
+    // design — these are the same global totals the leaderboard already shows,
+    // aggregated across all users, with no per-user attribution.
+    "/api/stats/badge/:metric": async req => {
+      const metric = req.params.metric;
+      const labels: Record<string, string> = {
+        tokens: "tokens",
+        traces: "traces",
+        contributors: "contributors",
+      };
+      const label = labels[metric];
+      if (!label) {
+        return Response.json({ error: "Unknown metric" }, { status: 404 });
+      }
+
+      // Shields caches on its own, but a bad upstream shouldn't break the badge:
+      // fall back to a grey "unavailable" rather than an error status.
+      let message = "unavailable";
+      let color = "lightgrey";
+      try {
+        const stats = await fetchContributionStats();
+        message = formatCount(stats[metric as "tokens" | "traces" | "contributors"]);
+        color = "blue";
+      } catch (err: any) {
+        console.error(`Error building ${metric} badge:`, err);
+      }
+
+      return Response.json(
+        { schemaVersion: 1, label, message, color, cacheSeconds: 900 },
+        { headers: { "Cache-Control": "public, max-age=900" } }
+      );
     },
 
     // Admin: List all users

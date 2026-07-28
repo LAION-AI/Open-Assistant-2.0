@@ -11,6 +11,14 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" /></a>
+  <a href="https://github.com/LAION-AI/Open-Assistant-2.0/graphs/contributors"><img src="https://img.shields.io/github/contributors/LAION-AI/Open-Assistant-2.0?label=code%20contributors&color=blue" alt="Code contributors" /></a>
+</p>
+
+<p align="center">
+  <em>Live from <a href="https://oa.laion.ai">oa.laion.ai</a>:</em><br/>
+  <a href="https://oa.laion.ai"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Foa.laion.ai%2Fapi%2Fstats%2Fbadge%2Fcontributors&label=data%20contributors" alt="Data contributors" /></a>
+  <a href="https://oa.laion.ai"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Foa.laion.ai%2Fapi%2Fstats%2Fbadge%2Ftraces" alt="Traces collected" /></a>
+  <a href="https://oa.laion.ai"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Foa.laion.ai%2Fapi%2Fstats%2Fbadge%2Ftokens" alt="Tokens collected" /></a>
 </p>
 
 ---
