@@ -71,8 +71,11 @@ install -d -m 755 "$APP_DIR/data/caddy/data" "$APP_DIR/data/caddy/config"
 if [[ "$SRC_DIR" == "$APP_DIR" ]]; then
   echo "    (running from the deployed copy — no sync needed)"
 else
+  # /containers can hold podman's graphroot (install-rootless.sh puts it there);
+  # deleting it mid-sync tears the running stack down. Server-owned, never synced.
   rsync -a --delete \
-    --exclude 'node_modules' --exclude '.git' --exclude 'dist' --exclude '/data' \
+    --exclude 'node_modules' --exclude '.git' --exclude 'dist' \
+    --exclude '/data' --exclude '/containers*' \
     "$SRC_DIR"/ "$APP_DIR"/
 fi
 

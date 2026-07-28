@@ -56,8 +56,18 @@ mkdir -p "$APP_DIR"/data/{frontend,backend} "$APP_DIR"/data/caddy/{data,config}
 if [[ "$SRC_DIR" == "$APP_DIR" ]]; then
   echo "    (running from the deployed copy — no sync needed)"
 else
+  # /containers is podman's graphroot (see ensure_container_storage below) and
+  # /data holds the databases — both live inside APP_DIR but belong to the
+  # server, not the source tree. Without these excludes, --delete tries to wipe
+  # the container store on every deploy: it cannot unlink the vfs layers (they
+  # are owned by mapped subuids), so rsync exits 23 *after* partially deleting
+  # the store, which takes the running stack down with it.
+  #
+  # The glob also covers set-aside copies (containers.broken-*): /mnt/storage is
+  # root-owned, so a damaged store can only be parked next to the live one.
   rsync -a --delete \
-    --exclude 'node_modules' --exclude '.git' --exclude 'dist' --exclude '/data' \
+    --exclude 'node_modules' --exclude '.git' --exclude 'dist' \
+    --exclude '/data' --exclude '/containers*' \
     "$SRC_DIR"/ "$APP_DIR"/
 fi
 
