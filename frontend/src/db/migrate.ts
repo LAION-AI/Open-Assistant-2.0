@@ -35,6 +35,34 @@ export function runMigrations() {
     sqlite.run("ALTER TABLE users ADD COLUMN onboarded_at INTEGER");
   } catch {}
 
+  for (const col of [
+    "terms_accepted_at INTEGER",
+    "terms_version TEXT",
+    "dataset_consent INTEGER DEFAULT 0 NOT NULL",
+    "dataset_consent_at INTEGER",
+    "dataset_consent_version TEXT",
+  ]) {
+    try {
+      sqlite.run(`ALTER TABLE users ADD COLUMN ${col}`);
+    } catch {}
+  }
+
+  // Consent audit trail. Append-only: see schema.ts.
+  sqlite.run(`
+    CREATE TABLE IF NOT EXISTS consent_events (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      granted INTEGER NOT NULL,
+      version TEXT NOT NULL,
+      source TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  try {
+    sqlite.run("CREATE INDEX IF NOT EXISTS idx_consent_events_user ON consent_events(user_id, created_at)");
+  } catch {}
+
   // Pending email 2FA codes (see schema.ts for why these live server-side).
   sqlite.run(`
     CREATE TABLE IF NOT EXISTS email_otps (

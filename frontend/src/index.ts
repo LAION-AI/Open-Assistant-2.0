@@ -25,6 +25,13 @@ import {
   verifyTwoFactorChallengeToken,
 } from "./lib/session";
 import { parseCookies, serializeCookie } from "./lib/cookies";
+import {
+  getLegalDoc,
+  LEGAL_SLUGS,
+  TERMS_VERSION,
+  DATASET_CONSENT_VERSION,
+  DATASET_CONSENT_TEXT,
+} from "./lib/legal";
 import { buildStoredPayload, type SourceEnvelope } from "./lib/unified";
 import { parseCrushDb, parseHermesDb } from "./lib/tracedb";
 import { emailEnabled, sendVerificationEmail, sendPasswordResetEmail, sendTwoFactorCodeEmail } from "./lib/email";
@@ -626,6 +633,12 @@ function clientUser(user: any, extra: Record<string, unknown> = {}) {
     twoFactorMethod: user.twofaMethod ?? null,
     backupCodesRemaining,
     onboarded: !!user.onboardedAt,
+    // Derived so the UI never has to know the version comparison rule: a
+    // version bump means the stored acceptance no longer covers the current
+    // document, and the user has to be asked again.
+    termsCurrent: user.termsVersion === TERMS_VERSION,
+    datasetConsentCurrent:
+      user.datasetConsent === 1 && user.datasetConsentVersion === DATASET_CONSENT_VERSION,
     ...extra,
   };
 }
@@ -702,6 +715,19 @@ async function checkSecondFactor(user: any, code: string): Promise<string | null
   return "Two-factor is not enabled for this account";
 }
 
+/**
+ * Write the two consent records a new account starts with.
+ *
+ * Terms acceptance is a precondition for the account existing at all; dataset
+ * consent is recorded either way — an explicit "declined" row at signup is
+ * worth having, because "never asked" and "asked and said no" are different
+ * facts when a dataset release has to account for its provenance.
+ */
+async function recordSignupConsent(userId: string, datasetConsent: boolean): Promise<void> {
+  await dbAdapter.recordConsent(userId, "terms", true, TERMS_VERSION, "signup");
+  await dbAdapter.recordConsent(userId, "dataset", datasetConsent, DATASET_CONSENT_VERSION, "signup");
+}
+
 // Per-user contribution rollup from the Go backend, plus the global totals
 // derived from it. Shared by the leaderboard and the README stats badges.
 type ContributionEntry = { userId: string; totalTokens: number; totalTraces: number };
@@ -769,6 +795,25 @@ const server = serve({
     "/api/health": async () =>
       Response.json({ ok: true, name: "open-assistant-2", version: APP_VERSION }),
 
+    // Document versions and the exact consent wording. Public: the signup form
+    // needs it before an account exists, and § 5 DDG requires the Impressum to
+    // be reachable without registering.
+    "/api/legal": async () =>
+      Response.json({
+        slugs: LEGAL_SLUGS,
+        termsVersion: TERMS_VERSION,
+        datasetConsentVersion: DATASET_CONSENT_VERSION,
+        datasetConsentText: DATASET_CONSENT_TEXT,
+      }),
+
+    "/api/legal/:slug": async req => {
+      const doc = getLegalDoc(req.params.slug);
+      if (!doc) return Response.json({ error: "Unknown document" }, { status: 404 });
+      // Short cache: these change rarely, but a stale privacy policy in a proxy
+      // is worse than an extra request.
+      return Response.json(doc, { headers: { "Cache-Control": "public, max-age=300" } });
+    },
+
     // Get current authenticated user
     "/api/auth/me": async req => {
       const cookies = parseCookies(req.headers.get("cookie"));
@@ -799,17 +844,23 @@ const server = serve({
     "/api/auth/email/register": async req => {
       try {
         if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
-        const { username, email, password } = await req.json();
+        const { username, email, password, acceptedTerms, datasetConsent } = await req.json();
         const u = (username || "").trim();
         const e = (email || "").trim().toLowerCase();
         if (u.length < 3) return Response.json({ error: "Username must be at least 3 characters" }, { status: 400 });
         if (!EMAIL_RE.test(e)) return Response.json({ error: "Enter a valid email address" }, { status: 400 });
         if ((password || "").length < 8) return Response.json({ error: "Password must be at least 8 characters" }, { status: 400 });
+        // Enforced server-side, not just in the form: an account may not exist
+        // without a recorded acceptance of the terms.
+        if (acceptedTerms !== true) {
+          return Response.json({ error: "You must accept the Terms of Service and Privacy Policy" }, { status: 400 });
+        }
         if (await dbAdapter.getUserByUsername(u)) return Response.json({ error: "Username already taken" }, { status: 400 });
         if (await dbAdapter.getUserByEmail(e)) return Response.json({ error: "Email already registered" }, { status: 400 });
 
         const hash = await Bun.password.hash(password);
         const user = await dbAdapter.createEmailUser(u, e, hash);
+        await recordSignupConsent(user.id, datasetConsent === true);
 
         if (emailEnabled) {
           const token = await createEmailActionToken({ purpose: "verify", userId: user.id }, "24h");
@@ -1266,9 +1317,12 @@ const server = serve({
         if (req.method !== "POST") {
           return Response.json({ error: "Method not allowed" }, { status: 405 });
         }
-        const { username } = await req.json();
+        const { username, acceptedTerms, datasetConsent } = await req.json();
         if (!username || username.trim().length < 3) {
           return Response.json({ error: "Username must be at least 3 characters" }, { status: 400 });
+        }
+        if (acceptedTerms !== true) {
+          return Response.json({ error: "You must accept the Terms of Service and Privacy Policy" }, { status: 400 });
         }
 
         // Check if user already exists
@@ -1300,6 +1354,8 @@ const server = serve({
           challenge: options.challenge,
           username,
           userId,
+          acceptedTerms: true,
+          datasetConsent: datasetConsent === true,
         });
 
         return new Response(JSON.stringify(options), {
@@ -1372,8 +1428,15 @@ const server = serve({
         const username = storedData.username!;
         const userId = storedData.userId!;
 
+        // Consent travelled inside the signed challenge (see /register/options),
+        // so a client cannot reach account creation without it.
+        if (storedData.acceptedTerms !== true) {
+          return Response.json({ error: "You must accept the Terms of Service and Privacy Policy" }, { status: 400 });
+        }
+
         // 1. Create / retrieve user
         let user = await dbAdapter.getUserByUsername(username);
+        const isNewUser = !user;
         if (!user) {
           await dbAdapter.createUser(username);
           user = await dbAdapter.getUserByUsername(username);
@@ -1381,6 +1444,10 @@ const server = serve({
 
         if (!user) {
           return Response.json({ error: "Failed to create user record" }, { status: 500 });
+        }
+
+        if (isNewUser) {
+          await recordSignupConsent(user.id, storedData.datasetConsent === true);
         }
 
         // 2. Save credential
@@ -1549,6 +1616,48 @@ const server = serve({
         return new Response(JSON.stringify({ verified: true, user }), { headers });
       } catch (err: any) {
         console.error("Error verifying login:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Grant or withdraw dataset-release consent. Withdrawal must be as easy as
+    // giving it (GDPR Art. 7(3)), so this is the same one-click call either way.
+    "/api/user/consent": async req => {
+      try {
+        if (req.method !== "POST") {
+          return Response.json({ error: "Method not allowed" }, { status: 405 });
+        }
+        const cookies = parseCookies(req.headers.get("cookie"));
+        const sessionToken = cookies["session"];
+        if (!sessionToken) {
+          return Response.json({ error: "Unauthorized" }, { status: 401 });
+        }
+        const payload = await verifySessionToken(sessionToken);
+        if (!payload) {
+          return Response.json({ error: "Invalid session" }, { status: 401 });
+        }
+
+        const { kind, granted } = await req.json();
+        if (kind !== "dataset" && kind !== "terms") {
+          return Response.json({ error: "Unknown consent kind" }, { status: 400 });
+        }
+        // Terms acceptance can only be re-affirmed, never revoked in place —
+        // an account without accepted terms is closed, not downgraded.
+        if (kind === "terms" && granted !== true) {
+          return Response.json(
+            { error: "To withdraw from the terms, request account deletion at contact@laion.ai" },
+            { status: 400 }
+          );
+        }
+
+        const version = kind === "terms" ? TERMS_VERSION : DATASET_CONSENT_VERSION;
+        const source = kind === "terms" ? "re-accept" : "settings";
+        await dbAdapter.recordConsent(payload.userId, kind, granted === true, version, source);
+
+        const user = await dbAdapter.getUser(payload.userId);
+        return Response.json({ success: true, user: clientUser(user) });
+      } catch (err: any) {
+        console.error("Error recording consent:", err);
         return Response.json({ error: err.message }, { status: 500 });
       }
     },

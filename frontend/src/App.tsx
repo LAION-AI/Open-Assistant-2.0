@@ -10,6 +10,9 @@ import { FeedbackButton } from "./components/FeedbackButton";
 import { EmailAuth } from "./components/EmailAuth";
 import { OnboardingFlow } from "./components/OnboardingFlow";
 import { SecurityBanner } from "./components/SecurityBanner";
+import { LegalPage, LegalFooter } from "./components/LegalPage";
+import { TermsUpdateBanner } from "./components/TermsUpdateBanner";
+import { ConsentCheckboxes, EMPTY_CONSENT, type ConsentState } from "./components/ConsentCheckboxes";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Label } from "./components/ui/label";
@@ -49,6 +52,19 @@ interface User {
   twoFactorMethod?: string | null;
   backupCodesRemaining?: number;
   onboarded?: boolean;
+  termsCurrent?: boolean;
+  datasetConsent?: number;
+  datasetConsentCurrent?: boolean;
+}
+
+// The legal pages are real URLs so they can be linked to from outside the app
+// (and from the Impressum obligation's point of view, found without an
+// account). The server serves index.html for any path, so routing is just a
+// matter of reading it back.
+const LEGAL_PATHS = ["impressum", "privacy", "terms"];
+function slugFromPath(pathname: string): string | null {
+  const slug = pathname.replace(/^\/+|\/+$/g, "");
+  return LEGAL_PATHS.includes(slug) ? slug : null;
 }
 
 export function App() {
@@ -62,6 +78,8 @@ export function App() {
   const [passkeySupported, setPasskeySupported] = useState(true);
   const [isRegistering, setIsRegistering] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [legalSlug, setLegalSlug] = useState<string | null>(() => slugFromPath(window.location.pathname));
+  const [signupConsent, setSignupConsent] = useState<ConsentState>(EMPTY_CONSENT);
 
   const fetchUser = async () => {
     try {
@@ -86,6 +104,18 @@ export function App() {
       setPasskeySupported(supported);
     });
   }, []);
+
+  // Keep the legal view in step with browser back/forward.
+  useEffect(() => {
+    const onPop = () => setLegalSlug(slugFromPath(window.location.pathname));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  const closeLegal = () => {
+    window.history.pushState({}, "", "/");
+    setLegalSlug(null);
+  };
 
   const finishOnboarding = async () => {
     setShowOnboarding(false);
@@ -126,11 +156,15 @@ export function App() {
       setAuthError("Please enter a username with at least 3 characters.");
       return;
     }
+    if (!signupConsent.acceptedTerms) {
+      setAuthError("Please accept the Terms of Service and Privacy Policy to register.");
+      return;
+    }
 
     setAuthError(null);
     setAuthLoading(true);
 
-    const res = await registerPasskey(authUsername.trim());
+    const res = await registerPasskey(authUsername.trim(), signupConsent);
     setAuthLoading(false);
 
     if (res.error) {
@@ -165,6 +199,12 @@ export function App() {
       console.error("Logout failed:", err);
     }
   };
+
+  // Before the session check: a legal page must render even while /api/auth/me
+  // is in flight, and whether or not anyone is signed in.
+  if (legalSlug) {
+    return <LegalPage slug={legalSlug} onBack={closeLegal} />;
+  }
 
   if (loading) {
     return (
@@ -253,10 +293,16 @@ export function App() {
                   />
                 </div>
 
+                <ConsentCheckboxes
+                  value={signupConsent}
+                  onChange={setSignupConsent}
+                  disabled={authLoading}
+                />
+
                 <Button
                   type="submit"
-                  disabled={authLoading}
-                  className="w-full h-11 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold shadow-lg shadow-indigo-600/10"
+                  disabled={authLoading || !signupConsent.acceptedTerms}
+                  className="w-full h-11 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold shadow-lg shadow-indigo-600/10 disabled:opacity-50"
                 >
                   {authLoading ? "Initializing authenticator..." : "Register Passkey"}
                 </Button>
@@ -280,9 +326,12 @@ export function App() {
             {/* Email + password (alternative to passkeys) */}
             <EmailAuth onAuthed={setUser} />
           </CardContent>
-          <div className="px-6 py-4 bg-muted/30 border-t border-border/50 text-center text-[10px] text-muted-foreground/80 leading-relaxed flex items-center justify-center gap-1.5">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-            <span>Phishing-resistant passwordless WebAuthn logic</span>
+          <div className="px-6 py-4 bg-muted/30 border-t border-border/50 text-center text-[10px] text-muted-foreground/80 leading-relaxed space-y-2">
+            <div className="flex items-center justify-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Phishing-resistant passwordless WebAuthn logic</span>
+            </div>
+            <LegalFooter />
           </div>
         </Card>
       </div>
@@ -381,6 +430,8 @@ export function App() {
       {/* Nudge password accounts without a second factor towards Settings. */}
       <SecurityBanner user={user} onNavigate={handleNavigate} />
 
+      <TermsUpdateBanner user={user} onAccepted={fetchUser} />
+
       <OnboardingFlow
         open={showOnboarding}
         username={user.username}
@@ -406,8 +457,9 @@ export function App() {
               <AdminPanel />
             )}
           </div>
-          <footer className="w-full py-4 text-center text-[10px] text-muted-foreground/60 border-t border-border/30 bg-background/10">
-            Open Assistant 2.0 — Crowdsourcing secure interaction dataset for public model training.
+          <footer className="w-full py-4 text-center text-[10px] text-muted-foreground/60 border-t border-border/30 bg-background/10 space-y-1.5">
+            <div>Open Assistant 2.0 — Crowdsourcing secure interaction dataset for public model training.</div>
+            <LegalFooter />
           </footer>
         </main>
       )}

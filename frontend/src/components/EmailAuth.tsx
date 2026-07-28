@@ -3,6 +3,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Mail, Lock, User as UserIcon, Loader2, CheckCircle, AlertCircle, ArrowLeft, ShieldCheck, Smartphone } from "lucide-react";
+import { ConsentCheckboxes, EMPTY_CONSENT, type ConsentState } from "./ConsentCheckboxes";
 
 type Mode = "menu" | "login" | "register" | "forgot" | "reset" | "2fa";
 
@@ -15,6 +16,7 @@ function resetTokenFromUrl(): string | null {
 export function EmailAuth({ onAuthed }: { onAuthed: (user: any) => void }) {
   const initialReset = resetTokenFromUrl();
   const [mode, setMode] = useState<Mode>(initialReset ? "reset" : "menu");
+  const [consent, setConsent] = useState<ConsentState>(EMPTY_CONSENT);
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -65,7 +67,16 @@ export function EmailAuth({ onAuthed }: { onAuthed: (user: any) => void }) {
 
   const doRegister = async (e: FormEvent) => {
     e.preventDefault();
-    const { ok, data } = await post("/api/auth/email/register", { username, email, password });
+    if (!consent.acceptedTerms) {
+      setError("Please accept the Terms of Service and Privacy Policy to register.");
+      return;
+    }
+    const { ok, data } = await post("/api/auth/email/register", {
+      username,
+      email,
+      password,
+      ...consent,
+    });
     if (ok && data.user) onAuthed(data.user);
     else if (ok && data.needsVerification) {
       setNotice(`We sent a verification link to ${email}. Click it to activate your account.`);
@@ -145,8 +156,8 @@ export function EmailAuth({ onAuthed }: { onAuthed: (user: any) => void }) {
     </>
   );
 
-  const submitBtn = (label: string) => (
-    <Button type="submit" disabled={loading} className="w-full h-11 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold gap-2">
+  const submitBtn = (label: string, blocked = false) => (
+    <Button type="submit" disabled={loading || blocked} className="w-full h-11 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold gap-2 disabled:opacity-50">
       {loading && <Loader2 className="w-4 h-4 animate-spin" />}
       <span>{label}</span>
     </Button>
@@ -275,8 +286,9 @@ export function EmailAuth({ onAuthed }: { onAuthed: (user: any) => void }) {
           </div>
           {fieldEmail}
           {fieldPassword("Password (min 8 chars)", "new-password")}
+          <ConsentCheckboxes value={consent} onChange={setConsent} disabled={loading} />
           {alerts}
-          {submitBtn("Create account")}
+          {submitBtn("Create account", !consent.acceptedTerms)}
           {backBtn}
         </form>
       )}

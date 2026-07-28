@@ -42,6 +42,11 @@ export async function createChallengeToken(payload: {
   challenge: string;
   username?: string;
   userId?: string;
+  // Consent choices made on the signup form. Carried inside the signed
+  // challenge rather than re-sent with the verify call, so what gets recorded
+  // is what the user actually ticked — the client cannot alter it in between.
+  acceptedTerms?: boolean;
+  datasetConsent?: boolean;
 }) {
   return await new jose.SignJWT(payload)
     .setProtectedHeader({ alg: "HS256" })
@@ -53,7 +58,13 @@ export async function createChallengeToken(payload: {
 export async function verifyChallengeToken(token: string) {
   try {
     const { payload } = await jose.jwtVerify(token, SECRET);
-    return payload as { challenge: string; username?: string; userId?: string };
+    return payload as {
+      challenge: string;
+      username?: string;
+      userId?: string;
+      acceptedTerms?: boolean;
+      datasetConsent?: boolean;
+    };
   } catch (e) {
     return null;
   }

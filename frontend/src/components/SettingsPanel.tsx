@@ -3,7 +3,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { Server, Key, Brain, CheckCircle, HelpCircle, RefreshCw, Copy, Check, Trash2, Network, Code2, Download, Loader2, Trophy, Eye, EyeOff, Terminal } from "lucide-react";
+import { Server, Key, Brain, CheckCircle, HelpCircle, RefreshCw, Copy, Check, Trash2, Network, Code2, Download, Loader2, Trophy, Eye, EyeOff, Terminal, Database } from "lucide-react";
 import { LoginMethods } from "./LoginMethods";
 import { RedactionSettings } from "./RedactionSettings";
 import { TwoFactorSettings } from "./TwoFactorSettings";
@@ -25,6 +25,8 @@ interface User {
   backupCodesRemaining?: number;
   onboarded?: boolean;
   showInLeaderboard?: number;
+  datasetConsent?: number;
+  datasetConsentCurrent?: boolean;
   isAdmin: number;
 }
 
@@ -773,6 +775,61 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
             <span
               className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${
                 user.showInLeaderboard !== 0 ? "translate-x-6" : "translate-x-1"
+              }`}
+            />
+          </button>
+        </div>
+      </CardContent>
+    </Card>
+
+    {/* Dataset release consent. Withdrawal has to be exactly as easy as giving
+        it (GDPR Art. 7(3)), hence the same one-click toggle in both directions. */}
+    <Card className="bg-card/40 backdrop-blur-md border border-border/80 shadow-xl overflow-hidden">
+      <CardContent className="p-5">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0">
+              <Database className="w-4 h-4 text-emerald-400" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold">Open Dataset Consent</div>
+              <div className="text-[11px] text-muted-foreground leading-relaxed">
+                {user.datasetConsentCurrent
+                  ? "Your interactions may be published in an open dataset under CC-BY 4.0, after filtering and PII removal."
+                  : "Your interactions stay private and are excluded from dataset releases."}{" "}
+                <a href="/privacy" target="_blank" className="text-indigo-400 hover:underline">
+                  How this works
+                </a>
+                {user.datasetConsentCurrent && (
+                  <span className="block mt-1 text-muted-foreground/70">
+                    Withdrawing stops all future releases, but cannot recall a release that is already public.
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={async () => {
+              try {
+                const res = await fetch("/api/user/consent", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ kind: "dataset", granted: !user.datasetConsentCurrent }),
+                });
+                if (!res.ok) throw new Error("Failed to update consent");
+                const data = await res.json();
+                onUpdateUser(data.user);
+              } catch (err) {
+                console.error("Dataset consent toggle error:", err);
+              }
+            }}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 flex-shrink-0 cursor-pointer ${
+              user.datasetConsentCurrent ? "bg-emerald-600" : "bg-muted border border-border/50"
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${
+                user.datasetConsentCurrent ? "translate-x-6" : "translate-x-1"
               }`}
             />
           </button>

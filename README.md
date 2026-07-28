@@ -50,7 +50,33 @@ User interaction data — the prompts you type, the follow-ups you send, the ima
 | 📦 My Uploads | ✅ Done | Per-user view of your contributions (Chat / V1 Proxy / Local traces) with preview and delete |
 | 🛡️ Admin Dashboard | ✅ Done | Users + conversations with category filters and pagination |
 | 🌗 Theme Toggle | ✅ Done | System → dark → light |
+| 📜 Consent & Legal | ✅ Done | Impressum, Privacy Policy and Terms served in-app; versioned terms acceptance at signup plus a separate, revocable opt-in for dataset publication, with an append-only consent audit trail |
 | 📊 Open Dataset Export | 📋 Planned | Anonymized, exportable interaction logs for model training |
+
+---
+
+## Legal & consent
+
+Contributing data to an open dataset is a consent question before it is an
+engineering one, so the two are kept separate in both the UI and the database:
+
+- **[Terms of Service](frontend/legal/terms.md)** and
+  **[Privacy Policy](frontend/legal/privacy.md)** — accepted together at
+  signup. The accepted version is recorded per user; bumping the version asks
+  everyone again.
+- **[Impressum](frontend/legal/impressum.md)** — statutory disclosure under
+  § 5 DDG, reachable without an account.
+- **Dataset-release consent** — a distinct opt-in, off unless ticked,
+  revocable in Settings at any time. It names the licence
+  ([CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/)) and states plainly
+  that an already-published release cannot be recalled.
+- **[DATASHEET.md](DATASHEET.md)** — the corpus documented following
+  *Datasheets for Datasets*, maintained alongside the code that collects it.
+
+Every grant and withdrawal is appended to a `consent_events` table with the
+document version, timestamp and origin, so a release can always be traced back
+to the consent that permits it. The documents have **not yet been reviewed by
+a lawyer** — see [frontend/legal/README.md](frontend/legal/README.md).
 
 ---
 

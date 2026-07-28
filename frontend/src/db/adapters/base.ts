@@ -15,7 +15,15 @@ export interface UserRecord {
   totpSecret?: string | null;
   backupCodes?: string | null; // JSON array of SHA-256 hashes
   onboardedAt?: number | null;
+  termsAcceptedAt?: number | null;
+  termsVersion?: string | null;
+  datasetConsent?: number;
+  datasetConsentAt?: number | null;
+  datasetConsentVersion?: string | null;
 }
+
+export type ConsentKind = "terms" | "dataset";
+export type ConsentSource = "signup" | "settings" | "re-accept";
 
 export interface TwoFactorSettings {
   method: "totp" | "email" | null;
@@ -77,4 +85,14 @@ export interface DatabaseAdapter {
 
   // Onboarding
   setOnboardedAt(id: string, at: number | null): Promise<void>;
+
+  // Consent. Writing the audit row and updating current state is one operation
+  // on purpose: a state change without its evidence row is a compliance hole.
+  recordConsent(
+    userId: string,
+    kind: ConsentKind,
+    granted: boolean,
+    version: string,
+    source: ConsentSource
+  ): Promise<void>;
 }

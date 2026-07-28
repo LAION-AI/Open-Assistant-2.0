@@ -10,12 +10,17 @@ export async function isPasskeySupported(): Promise<boolean> {
   }
 }
 
-export async function registerPasskey(username: string) {
+export async function registerPasskey(
+  username: string,
+  consent: { acceptedTerms: boolean; datasetConsent: boolean }
+) {
   try {
+    // Consent goes with the options request, not the verify: the server seals
+    // it into the signed challenge so the choice recorded is the one made here.
     const optionsRes = await fetch("/api/auth/register/options", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username }),
+      body: JSON.stringify({ username, ...consent }),
     });
 
     if (!optionsRes.ok) {

@@ -1,12 +1,14 @@
 import { eq, sql } from "drizzle-orm";
 import type { BunSQLiteDatabase } from "drizzle-orm/bun-sqlite";
-import { users, credentials, emailOtps } from "../schema";
+import { users, credentials, emailOtps, consentEvents } from "../schema";
 import type {
   DatabaseAdapter,
   UserRecord,
   StoredCredential,
   TwoFactorSettings,
   PendingOtp,
+  ConsentKind,
+  ConsentSource,
 } from "./base";
 
 export class DrizzleAdapter implements DatabaseAdapter {
@@ -248,5 +250,40 @@ export class DrizzleAdapter implements DatabaseAdapter {
 
   async setOnboardedAt(id: string, at: number | null): Promise<void> {
     await this.db.update(users).set({ onboardedAt: at }).where(eq(users.id, id)).run();
+  }
+
+  async recordConsent(
+    userId: string,
+    kind: ConsentKind,
+    granted: boolean,
+    version: string,
+    source: ConsentSource
+  ): Promise<void> {
+    const at = Date.now();
+    await this.db
+      .insert(consentEvents)
+      .values({
+        id: crypto.randomUUID(),
+        userId,
+        kind,
+        granted: granted ? 1 : 0,
+        version,
+        source,
+        createdAt: at,
+      })
+      .run();
+
+    // Current state mirrors the latest event. Withdrawal keeps the timestamp
+    // and version of the decision, so "declined on <date>, document v1.0" is
+    // still answerable from the users row alone.
+    const patch =
+      kind === "terms"
+        ? { termsAcceptedAt: granted ? at : null, termsVersion: granted ? version : null }
+        : {
+            datasetConsent: granted ? 1 : 0,
+            datasetConsentAt: at,
+            datasetConsentVersion: version,
+          };
+    await this.db.update(users).set(patch).where(eq(users.id, userId)).run();
   }
 }
