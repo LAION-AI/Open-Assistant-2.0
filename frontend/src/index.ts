@@ -1679,13 +1679,15 @@ const server = serve({
     // aggregated across all users, with no per-user attribution.
     "/api/stats/badge/:metric": async req => {
       const metric = req.params.metric;
-      const labels: Record<string, string> = {
-        tokens: "tokens",
-        traces: "traces",
-        contributors: "contributors",
+      // One colour per metric so the badge row reads as distinct values rather
+      // than a wall of blue. Shields takes the colour from this response.
+      const badges: Record<string, { label: string; color: string }> = {
+        contributors: { label: "contributors", color: "14b8a6" },
+        traces: { label: "traces", color: "f59e0b" },
+        tokens: { label: "tokens", color: "10b981" },
       };
-      const label = labels[metric];
-      if (!label) {
+      const badge = badges[metric];
+      if (!badge) {
         return Response.json({ error: "Unknown metric" }, { status: 404 });
       }
 
@@ -1696,13 +1698,13 @@ const server = serve({
       try {
         const stats = await fetchContributionStats();
         message = formatCount(stats[metric as "tokens" | "traces" | "contributors"]);
-        color = "blue";
+        color = badge.color;
       } catch (err: any) {
         console.error(`Error building ${metric} badge:`, err);
       }
 
       return Response.json(
-        { schemaVersion: 1, label, message, color, cacheSeconds: 900 },
+        { schemaVersion: 1, label: badge.label, message, color, cacheSeconds: 900 },
         { headers: { "Cache-Control": "public, max-age=900" } }
       );
     },
