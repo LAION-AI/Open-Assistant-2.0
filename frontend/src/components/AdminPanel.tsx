@@ -15,7 +15,7 @@ import {
 } from "../lib/chat";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Checkbox } from "./ui/checkbox";
-import { Users, FileText, Database, Shield, Coins, Calendar, ChevronDown, ChevronUp, RefreshCw, AlertCircle, Brain, MessageSquare, Code, Eye, EyeOff, DownloadCloud } from "lucide-react";
+import { Users, FileText, Database, Shield, Calendar, ChevronDown, ChevronUp, RefreshCw, AlertCircle, Brain, MessageSquare, Code, Eye, EyeOff, DownloadCloud } from "lucide-react";
 
 interface AdminUser {
   id: string;
@@ -33,7 +33,7 @@ interface FeedbackItem {
   userId: string;
   message: string;
   category: string;
-  status: string; // "open" | "done"
+  status: string; // "open" | "done" | "dismissed"
   createdAt: number;
   resolvedAt: number;
 }
@@ -270,7 +270,7 @@ export function AdminPanel() {
     fetchFeedback();
   }, []);
 
-  const openFeedback = feedback.filter(f => f.status !== "done").length;
+  const openFeedback = feedback.filter(f => f.status === "open").length;
 
   // Fold per-turn log rows into conversations (one entry per chat).
   const conversations = groupConversations(logs as InteractionLog[]);
@@ -372,7 +372,7 @@ export function AdminPanel() {
               <span>Admin Dashboard</span>
             </CardTitle>
             <CardDescription className="text-xs">
-              Monitor registered users, credits, endpoints, and collected interaction telemetry.
+              Monitor registered users, endpoints, and collected interaction telemetry.
             </CardDescription>
           </div>
           <button
@@ -449,7 +449,6 @@ export function AdminPanel() {
                   <thead>
                     <tr className="border-b border-border/40 text-[10px] text-muted-foreground font-bold uppercase bg-muted/20">
                       <th className="px-6 py-3.5">Username</th>
-                      <th className="px-6 py-3.5">Credits</th>
                       <th className="px-6 py-3.5">BYOE Status</th>
                       <th className="px-6 py-3.5">Admin</th>
                       <th className="px-6 py-3.5 text-right">Registered At</th>
@@ -466,10 +465,6 @@ export function AdminPanel() {
                               owner
                             </span>
                           )}
-                        </td>
-                        <td className="px-6 py-4 text-muted-foreground font-medium flex items-center gap-1">
-                          <Coins className="w-3.5 h-3.5 text-amber-500/80" />
-                          <span>{u.credits}</span>
                         </td>
                         <td className="px-6 py-4">
                           {u.byoeUrl ? (
@@ -557,10 +552,12 @@ export function AdminPanel() {
                 <div className="divide-y divide-border/40">
                   {feedback.map(item => {
                     const isDone = item.status === "done";
+                    const isDismissed = item.status === "dismissed";
+                    const isResolved = isDone || isDismissed;
                     return (
                       <div
                         key={item.id}
-                        className={`px-5 py-3.5 flex items-start gap-3 ${isDone ? "opacity-55" : ""}`}
+                        className={`px-5 py-3.5 flex items-start gap-3 ${isResolved ? "opacity-55" : ""}`}
                       >
                         <Checkbox
                           checked={isDone}
@@ -569,7 +566,7 @@ export function AdminPanel() {
                           title={isDone ? "Reopen" : "Mark done"}
                         />
                         <div className="min-w-0 flex-1 space-y-1">
-                          <p className={`text-xs leading-relaxed whitespace-pre-wrap break-words ${isDone ? "line-through text-muted-foreground" : "text-foreground/90"}`}>
+                          <p className={`text-xs leading-relaxed whitespace-pre-wrap break-words ${isResolved ? "line-through text-muted-foreground" : "text-foreground/90"}`}>
                             {item.message}
                           </p>
                           <div className="flex items-center gap-2 text-[10px] text-muted-foreground/70">
@@ -590,10 +587,12 @@ export function AdminPanel() {
                           className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-full border flex-shrink-0 ${
                             isDone
                               ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
+                              : isDismissed
+                                ? "text-muted-foreground bg-muted/60 border-border/60"
                               : "text-amber-400 bg-amber-500/10 border-amber-500/20"
                           }`}
                         >
-                          {isDone ? "done" : "open"}
+                          {isDone ? "done" : isDismissed ? "dismissed" : "open"}
                         </span>
                       </div>
                     );

@@ -16,7 +16,6 @@ import {
   Image as ImageIcon,
   AlertCircle,
   Server,
-  Coins,
   Brain,
   ChevronDown,
   Copy,
@@ -25,6 +24,9 @@ import {
   MessageSquare,
   Loader2,
   ShieldCheck,
+  ExternalLink,
+  Settings2,
+  Sprout,
 } from "lucide-react";
 
 interface Message {
@@ -48,6 +50,7 @@ interface User {
 interface ChatPanelProps {
   user: User;
   onRefreshUser: () => void;
+  onNavigate: (tab: string) => void;
 }
 
 function relativeTime(ts: number): string {
@@ -63,7 +66,7 @@ function relativeTime(ts: number): string {
   return new Date(ms).toLocaleDateString();
 }
 
-export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
+export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [image, setImage] = useState<string | null>(null);
@@ -90,7 +93,7 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const isBYOE = !!(user.byoeUrl && user.byoeKey);
+  const hasV1Endpoint = !!user.byoeUrl?.trim();
 
   // Auto-scroll to bottom of messages
   useEffect(() => {
@@ -121,6 +124,12 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
   }, []);
 
   useEffect(() => {
+    if (!hasV1Endpoint) {
+      setModels([]);
+      setModel("");
+      return;
+    }
+
     // Load the model list for the on-the-fly model picker.
     fetch("/api/models")
       .then(r => (r.ok ? r.json() : null))
@@ -140,7 +149,7 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
         setModels([]);
         setModel("");
       });
-  }, [user.byoeUrl, user.byoeKey]);
+  }, [hasV1Endpoint, user.byoeUrl, user.byoeKey]);
 
   const newChat = () => {
     setMessages([]);
@@ -236,6 +245,10 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!hasV1Endpoint) {
+      setError("Configure a V1-compatible endpoint before starting a chat.");
+      return;
+    }
     if (!input.trim() && !image) return;
     if (loading) return;
 
@@ -367,7 +380,7 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
         }
       }
 
-      // Refresh credits and the conversation sidebar after a successful response.
+      // Refresh endpoint settings and the conversation sidebar after a successful response.
       onRefreshUser();
       fetchHistory();
     } catch (err: any) {
@@ -464,7 +477,7 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
         {/* Panel Header */}
         <div className="flex min-w-0 items-center justify-between gap-2 px-3 sm:px-6 py-2.5 sm:py-3.5 border-b border-border/70 bg-card/50">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0"></div>
+            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${hasV1Endpoint ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground/40"}`}></div>
             <span className="font-semibold text-sm text-foreground truncate">
               {messages.length > 0 ? "Conversation" : "New chat"}
             </span>
@@ -505,16 +518,10 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
                 ))}
               </select>
             )}
-            {isBYOE ? (
+            {hasV1Endpoint && (
               <div className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
                 <Server className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">BYOE Mode</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                <Coins className="w-3.5 h-3.5" />
-                <span>{user.credits}</span>
-                <span className="hidden sm:inline">Credits</span>
+                <span className="hidden sm:inline">V1 endpoint</span>
               </div>
             )}
           </div>
@@ -522,7 +529,53 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
 
         {/* Messages Scroll Area */}
         <div className="flex-1 min-h-0 min-w-0 px-3 sm:px-6 py-4 sm:py-6 overflow-x-hidden overflow-y-auto overscroll-contain space-y-4 sm:space-y-6">
-          {messages.length === 0 ? (
+          {messages.length === 0 && !hasV1Endpoint ? (
+            <div className="h-full flex flex-col items-center justify-center p-3 sm:p-8">
+              <div className="w-full max-w-xl overflow-hidden rounded-3xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/10 via-card/80 to-indigo-500/10 p-5 text-left shadow-xl sm:p-7">
+                <div className="mb-5 flex items-start gap-3">
+                  <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-400">
+                    <Sprout className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-400">
+                      Local-first chat
+                    </p>
+                    <h3 className="text-lg font-bold text-foreground sm:text-xl">
+                      Bring a model, keep the conversation flowing
+                    </h3>
+                  </div>
+                </div>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  Connect any OpenAI V1-compatible endpoint. Don&apos;t have one yet? Bonsai 27B 1-bit is an open,
+                  efficient model you can run locally, then connect here.
+                </p>
+                <div className="mt-5 grid gap-2.5 sm:grid-cols-2">
+                  <a
+                    href="https://github.com/PrismML-Eng/Bonsai-demo"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white shadow-lg shadow-emerald-600/15 transition hover:bg-emerald-500"
+                  >
+                    <Sprout className="h-4 w-4" />
+                    <span>Start with Bonsai 27B 1-bit</span>
+                    <ExternalLink className="h-3.5 w-3.5 opacity-70" />
+                  </a>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => onNavigate("settings-byoe")}
+                    className="h-11 rounded-xl gap-2 text-sm font-semibold"
+                  >
+                    <Settings2 className="h-4 w-4" />
+                    <span>Configure a V1 endpoint</span>
+                  </Button>
+                </div>
+                <p className="mt-4 text-[11px] leading-relaxed text-muted-foreground/75">
+                  Bonsai runs on your own Mac, Linux, or Windows machine. Once its server is running, add its V1 URL in Settings.
+                </p>
+              </div>
+            </div>
+          ) : messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-4 sm:p-8 space-y-4 max-w-md mx-auto">
               <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center border border-indigo-500/20 text-indigo-400">
                 <Server className="w-6 h-6" />
@@ -665,10 +718,11 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
         )}
 
         {/* Input Form Area */}
-        <form
-          onSubmit={handleSubmit}
-          className="px-3 sm:px-6 py-3 sm:py-4 border-t border-border/70 bg-card/50 flex min-w-0 items-end gap-2 sm:gap-3"
-        >
+        {hasV1Endpoint ? (
+          <form
+            onSubmit={handleSubmit}
+            className="px-3 sm:px-6 py-3 sm:py-4 border-t border-border/70 bg-card/50 flex min-w-0 items-end gap-2 sm:gap-3"
+          >
           <input
             type="file"
             accept="image/*"
@@ -707,7 +761,19 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
           >
             <Send className="w-4 h-4" />
           </Button>
-        </form>
+          </form>
+        ) : (
+          <div className="border-t border-border/70 bg-card/50 px-3 py-3 sm:px-6 sm:py-4">
+            <Button
+              type="button"
+              onClick={() => onNavigate("settings-byoe")}
+              className="h-11 w-full rounded-xl bg-indigo-600 text-sm font-semibold text-white hover:bg-indigo-700"
+            >
+              <Settings2 className="mr-2 h-4 w-4" />
+              Configure a V1 endpoint to chat
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

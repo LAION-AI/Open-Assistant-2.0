@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
@@ -28,6 +28,8 @@ import {
   ShieldCheck,
   Bot,
   Rocket,
+  Search,
+  ChevronDown,
   type LucideIcon,
 } from "lucide-react";
 
@@ -219,6 +221,9 @@ export function TraceUpload({
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ParsedTrace | null>(null);
   const [tip, setTip] = useState<TraceSource | null>(null);
+  const [sourceQuery, setSourceQuery] = useState("");
+  const [sourceOpen, setSourceOpen] = useState(false);
+  const [activeSourceIndex, setActiveSourceIndex] = useState(0);
   const [pathCopied, setPathCopied] = useState(false);
   const [redactState, setRedactState] = useState<"idle" | "loading" | "running" | "done">("idle");
   const [redactStatus, setRedactStatus] = useState("");
@@ -231,9 +236,31 @@ export function TraceUpload({
 
   const folderRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
+  const sourcePickerRef = useRef<HTMLDivElement>(null);
 
   const os = detectOS();
   const osLabel = os === "windows" ? "Windows" : os === "mac" ? "macOS" : os === "linux" ? "Linux" : "your OS";
+  const normalizedSourceQuery = sourceQuery.trim().toLowerCase();
+  const filteredSources = TRACE_SOURCES.filter(src =>
+    `${src.label} ${src.id}`.toLowerCase().includes(normalizedSourceQuery)
+  );
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!sourcePickerRef.current?.contains(event.target as Node)) {
+        setSourceOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, []);
+
+  const selectSource = (src: TraceSource) => {
+    setTip(src);
+    setSourceQuery(src.label);
+    setSourceOpen(false);
+    setActiveSourceIndex(0);
+  };
 
   const copyPath = (path: string) => {
     navigator.clipboard?.writeText(path).then(() => {
@@ -442,16 +469,16 @@ export function TraceUpload({
       <CardHeader className="border-b border-border/50 bg-card/50">
         <CardTitle className="flex items-center gap-2 text-xl font-bold">
           <Upload className="w-5 h-5 text-indigo-400" />
-          <span>Upload your VS Code, Claude Code or alike traces</span>
+          <span>Upload agent traces</span>
         </CardTitle>
         <CardDescription className="text-xs leading-relaxed mt-1">
-          Pick a folder (e.g. <code>~/.claude/projects</code>) or individual session files. Everything is parsed
-          locally — review and select exactly which conversations to contribute before uploading.
+          Find the agent you use, open its session folder, then review exactly which conversations to contribute.
+          Parsing and privacy review happen locally before anything is uploaded.
         </CardDescription>
       </CardHeader>
-      <CardContent className="p-6 space-y-4">
+      <CardContent className="p-4 sm:p-6 space-y-4">
         {/* Pickers */}
-        <div className="flex flex-wrap gap-2">
+        <div className="space-y-3">
           <input
             ref={folderRef}
             type="file"
@@ -470,31 +497,151 @@ export function TraceUpload({
             className="hidden"
             onChange={e => handleFiles(e.target.files)}
           />
-          {TRACE_SOURCES.map(src => {
-            const Icon = src.icon;
-            return (
-              <Button
-                key={src.id}
-                type="button"
-                onClick={() => openSource(src)}
-                disabled={scanning}
-                className="h-11 rounded-xl text-white text-sm font-semibold gap-2 hover:brightness-110 transition"
-                style={{ backgroundColor: src.color }}
-                title={`Open the ${src.label} traces folder`}
-              >
-                <Icon className="w-4 h-4" />
-                <span>{src.label}</span>
-              </Button>
-            );
-          })}
-          <Button type="button" variant="outline" onClick={() => folderRef.current?.click()} disabled={scanning} className="h-11 rounded-xl text-sm gap-2">
-            {scanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderOpen className="w-4 h-4" />}
-            <span>Choose folder</span>
-          </Button>
-          <Button type="button" variant="outline" onClick={() => filesRef.current?.click()} disabled={scanning} className="h-11 rounded-xl text-sm gap-2">
-            <FileJson className="w-4 h-4" />
-            <span>Choose files</span>
-          </Button>
+
+          <div className="grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <div ref={sourcePickerRef} className="relative min-w-0">
+              <label htmlFor="trace-source-search" className="mb-1.5 block text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                Agent
+              </label>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-muted-foreground" />
+                <input
+                  id="trace-source-search"
+                  type="text"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={sourceOpen}
+                  aria-controls="trace-source-options"
+                  aria-activedescendant={
+                    sourceOpen && filteredSources[activeSourceIndex]
+                      ? `trace-source-${filteredSources[activeSourceIndex].id}`
+                      : undefined
+                  }
+                  value={sourceQuery}
+                  onFocus={() => {
+                    setSourceOpen(true);
+                    setActiveSourceIndex(0);
+                  }}
+                  onChange={event => {
+                    setSourceQuery(event.target.value);
+                    setSourceOpen(true);
+                    setActiveSourceIndex(0);
+                    if (tip && event.target.value !== tip.label) setTip(null);
+                  }}
+                  onKeyDown={event => {
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      setSourceOpen(true);
+                      setActiveSourceIndex(index => Math.min(index + 1, Math.max(filteredSources.length - 1, 0)));
+                    } else if (event.key === "ArrowUp") {
+                      event.preventDefault();
+                      setActiveSourceIndex(index => Math.max(index - 1, 0));
+                    } else if (event.key === "Enter" && sourceOpen && filteredSources[activeSourceIndex]) {
+                      event.preventDefault();
+                      selectSource(filteredSources[activeSourceIndex]);
+                    } else if (event.key === "Escape") {
+                      setSourceOpen(false);
+                    }
+                  }}
+                  placeholder="Search Claude, Codex, Copilot…"
+                  autoComplete="off"
+                  className="h-11 w-full rounded-xl border border-input bg-background/50 pl-10 pr-10 text-sm text-foreground outline-none transition focus:border-indigo-500/50 focus:ring-2 focus:ring-indigo-500/15"
+                />
+                <ChevronDown
+                  className={`pointer-events-none absolute right-3 top-3.5 h-4 w-4 text-muted-foreground transition-transform ${
+                    sourceOpen ? "rotate-180" : ""
+                  }`}
+                />
+              </div>
+
+              {sourceOpen && (
+                <div
+                  id="trace-source-options"
+                  role="listbox"
+                  className="absolute left-0 right-0 top-full z-30 mt-1.5 max-h-64 overflow-y-auto rounded-xl border border-border/80 bg-popover p-1.5 text-popover-foreground shadow-2xl"
+                >
+                  {filteredSources.length > 0 ? (
+                    filteredSources.map((src, index) => {
+                      const Icon = src.icon;
+                      const selected = tip?.id === src.id;
+                      const active = index === activeSourceIndex;
+                      return (
+                        <button
+                          key={src.id}
+                          id={`trace-source-${src.id}`}
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          onMouseDown={event => event.preventDefault()}
+                          onMouseEnter={() => setActiveSourceIndex(index)}
+                          onClick={() => selectSource(src)}
+                          className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm transition ${
+                            active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+                          }`}
+                        >
+                          <span
+                            className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg"
+                            style={{ backgroundColor: `${src.color}18`, color: src.color }}
+                          >
+                            <Icon className="h-4 w-4" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-semibold">{src.label}</span>
+                            <span className="block truncate font-mono text-[10px] text-muted-foreground/70">
+                              {src.paths[os]}
+                            </span>
+                          </span>
+                          {selected && <Check className="h-4 w-4 flex-shrink-0 text-emerald-400" />}
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+                      No matching agent. Choose any folder or files below.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <Button
+              type="button"
+              onClick={() => tip && openSource(tip)}
+              disabled={scanning || !tip}
+              className="h-11 rounded-xl px-4 text-sm font-semibold text-white gap-2 disabled:bg-muted disabled:text-muted-foreground"
+              style={tip ? { backgroundColor: tip.color } : undefined}
+              title={tip ? `Open the ${tip.label} traces folder` : "Select an agent first"}
+            >
+              {scanning ? <Loader2 className="h-4 w-4 animate-spin" /> : tip ? <tip.icon className="h-4 w-4" /> : <FolderOpen className="h-4 w-4" />}
+              <span>{tip ? `Browse ${tip.label}` : "Select an agent"}</span>
+            </Button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-border/40 pt-3">
+            <span className="mr-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">
+              Or import manually
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => folderRef.current?.click()}
+              disabled={scanning}
+              className="h-9 rounded-lg text-xs gap-2"
+            >
+              {scanning ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FolderOpen className="w-3.5 h-3.5" />}
+              <span>Choose folder</span>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => filesRef.current?.click()}
+              disabled={scanning}
+              className="h-9 rounded-lg text-xs gap-2"
+            >
+              <FileJson className="w-3.5 h-3.5" />
+              <span>Choose files</span>
+            </Button>
+          </div>
         </div>
 
         {tip && (
@@ -512,7 +659,9 @@ export function TraceUpload({
                 <span>Copy</span>
               </Button>
             </div>
-            <div className="text-muted-foreground">{DIALOG_TIP[os]} <span className="text-muted-foreground/70">(path already copied to your clipboard)</span></div>
+            <div className="text-muted-foreground">
+              The Browse button copies this path before opening the picker. {DIALOG_TIP[os]}
+            </div>
           </div>
         )}
 

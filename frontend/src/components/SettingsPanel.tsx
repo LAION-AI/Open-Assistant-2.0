@@ -345,7 +345,7 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
             <span>Bring Your Own Endpoint (BYOE)</span>
           </CardTitle>
           <CardDescription className="text-xs leading-relaxed mt-1">
-            Donate interaction data using your own API endpoint and compute. By entering your endpoint details below, chat requests will stream directly through your custom API key.
+            Connect an OpenAI V1-compatible endpoint and donate interaction data using your own compute. API keys are optional for local servers.
           </CardDescription>
         </CardHeader>
         <CardContent className="p-4 sm:p-6">
@@ -383,8 +383,17 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
                 <Server className="absolute left-3.5 top-3.5 w-4 h-4 text-muted-foreground" />
               </div>
               <p className="text-[10px] text-muted-foreground/80 leading-relaxed px-1">
-                The target OpenAI v1-compatible completions endpoint. Supports local servers (e.g. <code>https://pizero:8008/v1</code>).
+                The target OpenAI V1-compatible endpoint. For a local Bonsai server, use <code>http://localhost:8080/v1</code>.
               </p>
+              <a
+                href="https://github.com/PrismML-Eng/Bonsai-demo"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 px-1 text-[10px] font-semibold text-emerald-400 hover:text-emerald-300"
+              >
+                Set up Bonsai 27B 1-bit
+                <Download className="h-3 w-3" />
+              </a>
               {byoeUrl && (
                 <Button
                   type="button"

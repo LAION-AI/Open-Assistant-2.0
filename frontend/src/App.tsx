@@ -23,7 +23,6 @@ import {
   MessageSquare,
   Settings,
   LogOut,
-  Coins,
   Shield,
   Fingerprint,
   Sparkles,
@@ -70,6 +69,7 @@ function slugFromPath(pathname: string): string | null {
 
 export function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [appVersion, setAppVersion] = useState("");
   const [loading, setLoading] = useState(true);
   const [authUsername, setAuthUsername] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
@@ -116,10 +116,23 @@ export function App() {
 
   useEffect(() => {
     fetchUser();
+    fetch("/api/health")
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        if (data?.version) setAppVersion(String(data.version));
+      })
+      .catch(() => {});
     isPasskeySupported().then(supported => {
       setPasskeySupported(supported);
     });
   }, []);
+
+  const displayVersion = appVersion
+    ? `v${appVersion
+        .replace(/^v/, "")
+        .replace(/^(\d+\.\d+)\.0$/, "$1")
+        .replace(/^(\d+\.\d+)\.0-([a-z]+)$/i, "$1$2")}`
+    : "";
 
   // Keep the legal view in step with browser back/forward.
   useEffect(() => {
@@ -385,6 +398,7 @@ export function App() {
               <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
               <span>Phishing-resistant passwordless WebAuthn logic</span>
             </div>
+            {displayVersion && <div className="font-mono text-muted-foreground/60">{displayVersion}</div>}
             <LegalFooter />
           </div>
         </Card>
@@ -413,6 +427,11 @@ export function App() {
             <span className="font-extrabold text-base tracking-tight hidden sm:block">
               Open Assistant 2.0
             </span>
+            {displayVersion && (
+              <span className="rounded-md border border-border/60 bg-muted/60 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-muted-foreground">
+                {displayVersion}
+              </span>
+            )}
           </div>
 
           <div className="flex min-w-0 items-center gap-2 md:gap-3">
@@ -474,7 +493,7 @@ export function App() {
       {/* Main Container — chat fills the viewport; other tabs scroll centered */}
       {activeTab === "chat" ? (
         <main className="flex-1 min-h-0 min-w-0 w-full max-w-[1400px] mx-auto p-2 sm:px-4 sm:py-4">
-          <ChatPanel user={user} onRefreshUser={fetchUser} />
+          <ChatPanel user={user} onRefreshUser={fetchUser} onNavigate={handleNavigate} />
         </main>
       ) : (
         <main className="flex-1 min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain">
@@ -493,7 +512,9 @@ export function App() {
             )}
           </div>
           <footer className="w-full py-4 text-center text-[10px] text-muted-foreground/60 border-t border-border/30 bg-background/10 space-y-1.5">
-            <div>Open Assistant 2.0 — Crowdsourcing secure interaction dataset for public model training.</div>
+            <div>
+              Open Assistant 2.0{displayVersion ? ` ${displayVersion}` : ""} — Crowdsourcing secure interaction dataset for public model training.
+            </div>
             <LegalFooter />
           </footer>
         </main>

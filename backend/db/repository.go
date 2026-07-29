@@ -46,7 +46,7 @@ type FeedbackEntry struct {
 	UserID     string `json:"userId"`
 	Message    string `json:"message"`
 	Category   string `json:"category"`
-	Status     string `json:"status"` // "open" | "done"
+	Status     string `json:"status"` // "open" | "done" | "dismissed"
 	CreatedAt  int64  `json:"createdAt"`
 	ResolvedAt int64  `json:"resolvedAt"`
 }

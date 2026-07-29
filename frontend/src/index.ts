@@ -481,8 +481,11 @@ async function proxyChatCompletion(
   useV1Beta: boolean = false,
 ): Promise<Response> {
   const isBYOE = !!user.byoeUrl;
-  if (!isBYOE && user.credits <= 0) {
-    return Response.json({ error: "Out of credits! Please configure BYOE in settings." }, { status: 402 });
+  if (!isBYOE) {
+    return Response.json(
+      { error: "Configure an OpenAI V1-compatible endpoint in Settings before chatting." },
+      { status: 400 },
+    );
   }
 
   // Model selection on the fly: explicit request model (model or model_id), else the saved default.
@@ -514,8 +517,6 @@ async function proxyChatCompletion(
     const errText = await response.text();
     return new Response(errText, { status: response.status, headers: { "Content-Type": "text/plain" } });
   }
-
-  if (!isBYOE) await dbAdapter.updateCredits(user.id, -10);
 
   const contentType = reqBody?.stream === false ? "application/json" : "text/event-stream";
   return new Response(response.body, {
@@ -587,14 +588,18 @@ function detectPlatform(req: Request): string {
   return firstPart.slice(0, 40) || "api";
 }
 
-// Feedback API is accessible to (a) the configured bearer token — for an
-// automation agent — or (b) a logged-in admin (for the dashboard).
+// The dashboard uses the administrator's browser session. Automation has a
+// separate endpoint below so its bearer token can never list other users'
+// feedback.
 const FEEDBACK_TOKEN = process.env.FEEDBACK_TOKEN || "";
 
-async function feedbackAuthorized(req: Request): Promise<boolean> {
+function feedbackBearerAuthorized(req: Request): boolean {
   const auth = req.headers.get("Authorization") || "";
   const token = auth.replace(/^Bearer\s+/i, "").trim();
-  if (FEEDBACK_TOKEN && token && token === FEEDBACK_TOKEN) return true;
+  return !!(FEEDBACK_TOKEN && token && token === FEEDBACK_TOKEN);
+}
+
+async function adminFeedbackAuthorized(req: Request): Promise<boolean> {
   const cookies = parseCookies(req.headers.get("cookie"));
   const st = cookies["session"];
   if (st) {
@@ -605,6 +610,12 @@ async function feedbackAuthorized(req: Request): Promise<boolean> {
     }
   }
   return false;
+}
+
+async function primaryAdminId(): Promise<string | null> {
+  const allUsers = await db.select().from(users).all();
+  const firstUser = allUsers.sort((a, b) => a.createdAt - b.createdAt)[0];
+  return firstUser?.isAdmin === 1 ? firstUser.id : null;
 }
 
 // API keys are high-entropy random tokens, so a single SHA-256 is the standard,
@@ -2240,11 +2251,10 @@ const server = serve({
         if (!user) return Response.json({ error: "User not found" }, { status: 404 });
 
         if (!user.byoeUrl) {
-          // No custom endpoint — offer the platform default.
-          return Response.json({ models: ["gpt-4o"], default: user.byoeModel || "gpt-4o" });
+          return Response.json({ models: [], default: "", configured: false });
         }
         const models = await resolveModelList(user.byoeUrl, user.byoeKey);
-        return Response.json({ models, default: user.byoeModel || models[0] || "" });
+        return Response.json({ models, default: user.byoeModel || models[0] || "", configured: true });
       } catch (err: any) {
         console.error("Error listing models:", err);
         return Response.json({ error: err.message, models: [] }, { status: 200 });
@@ -2391,7 +2401,7 @@ const server = serve({
       }
     },
 
-    // Feedback: POST to submit (logged-in user); GET to list (admin or bearer).
+    // Feedback: POST to submit (logged-in user); GET to list (admin dashboard).
     "/api/feedback": async req => {
       if (req.method === "OPTIONS") {
         return new Response(null, {
@@ -2404,7 +2414,7 @@ const server = serve({
       }
       try {
         if (req.method === "GET") {
-          if (!(await feedbackAuthorized(req))) return Response.json({ error: "Unauthorized" }, { status: 401 });
+          if (!(await adminFeedbackAuthorized(req))) return Response.json({ error: "Unauthorized" }, { status: 401 });
           const status = new URL(req.url).searchParams.get("status") || "";
           const r = await fetch(`${BACKEND_URL}/api/feedback?status=${encodeURIComponent(status)}`);
           return Response.json(await r.json());
@@ -2439,7 +2449,7 @@ const server = serve({
       }
     },
 
-    // Mark feedback done/open (admin or bearer) — lets an agent tick items off.
+    // Mark feedback done/open from the admin dashboard.
     "/api/feedback/update": async req => {
       if (req.method === "OPTIONS") {
         return new Response(null, {
@@ -2452,7 +2462,7 @@ const server = serve({
       }
       try {
         if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
-        if (!(await feedbackAuthorized(req))) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        if (!(await adminFeedbackAuthorized(req))) return Response.json({ error: "Unauthorized" }, { status: 401 });
         const body = await req.json().catch(() => ({}));
         const id = Number(body?.id);
         const status = body?.status === "open" ? "open" : "done";
@@ -2466,6 +2476,69 @@ const server = serve({
         return Response.json(await r.json());
       } catch (err: any) {
         console.error("Error in /api/feedback/update:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Restricted automation inbox. The bearer token can only see and close
+    // feedback submitted by the earliest administrator account. Filtering
+    // happens here, before any feedback text reaches the automation client.
+    "/api/feedback/automation": async req => {
+      if (req.method === "OPTIONS") {
+        return new Response(null, {
+          headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+          },
+        });
+      }
+      try {
+        if (!feedbackBearerAuthorized(req)) {
+          return Response.json({ error: "Unauthorized" }, { status: 401 });
+        }
+        const adminId = await primaryAdminId();
+        if (!adminId) return Response.json({ feedback: [] });
+
+        if (req.method === "GET") {
+          const response = await fetch(`${BACKEND_URL}/api/feedback?status=open`);
+          if (!response.ok) throw new Error(await response.text());
+          const data = await response.json();
+          const feedback = (Array.isArray(data?.feedback) ? data.feedback : [])
+            .filter((item: any) => item.userId === adminId)
+            .sort((a: any, b: any) => a.createdAt - b.createdAt);
+          return Response.json({ feedback });
+        }
+
+        if (req.method !== "POST") {
+          return Response.json({ error: "Method not allowed" }, { status: 405 });
+        }
+        const body = await req.json().catch(() => ({}));
+        const id = Number(body?.id);
+        const status = body?.status === "dismissed" ? "dismissed" : "done";
+        if (!id) return Response.json({ error: "id required" }, { status: 400 });
+
+        // Re-read the open inbox and verify ownership before allowing the
+        // automation to close an item.
+        const listResponse = await fetch(`${BACKEND_URL}/api/feedback?status=open`);
+        if (!listResponse.ok) throw new Error(await listResponse.text());
+        const list = await listResponse.json();
+        const permitted = (Array.isArray(list?.feedback) ? list.feedback : []).some(
+          (item: any) => item.id === id && item.userId === adminId
+        );
+        if (!permitted) {
+          return Response.json({ error: "Feedback item not permitted" }, { status: 403 });
+        }
+
+        const updateResponse = await fetch(`${BACKEND_URL}/api/feedback/update`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, status }),
+        });
+        if (!updateResponse.ok) throw new Error(await updateResponse.text());
+        return Response.json(await updateResponse.json());
+      } catch (err: any) {
+        console.error("Error in /api/feedback/automation:", err);
         return Response.json({ error: err.message }, { status: 500 });
       }
     },

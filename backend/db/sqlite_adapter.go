@@ -283,7 +283,7 @@ func (r *SQLiteRepository) GetFeedback(ctx context.Context, status string) ([]*F
 
 func (r *SQLiteRepository) UpdateFeedbackStatus(ctx context.Context, id int64, status string) (int64, error) {
 	var resolvedAt interface{} = 0
-	if status == "done" {
+	if status == "done" || status == "dismissed" {
 		resolvedAt = time.Now().Unix()
 	}
 	res, err := r.db.ExecContext(ctx, `UPDATE feedback SET status = ?, resolved_at = ? WHERE id = ?`, status, resolvedAt, id)

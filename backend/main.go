@@ -216,7 +216,7 @@ func main() {
 		w.Write([]byte(`{"success":true}`))
 	})
 
-	// Update feedback status ("open" | "done").
+	// Update feedback status ("open" | "done" | "dismissed").
 	mux.HandleFunc("/api/feedback/update", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
@@ -239,7 +239,7 @@ func main() {
 			http.Error(w, "Invalid request payload", http.StatusBadRequest)
 			return
 		}
-		if payload.Status != "open" && payload.Status != "done" {
+		if payload.Status != "open" && payload.Status != "done" && payload.Status != "dismissed" {
 			payload.Status = "done"
 		}
 		n, err := repo.UpdateFeedbackStatus(r.Context(), payload.ID, payload.Status)
