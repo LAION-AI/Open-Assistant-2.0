@@ -15,11 +15,18 @@ interface ConsentCheckboxesProps {
 /**
  * The consent checkboxes shown on every signup path.
  *
- * They are deliberately separate controls: accepting the terms is required to
- * hold an account, while publishing your interactions and showing your username
- * on the leaderboard are optional and revocable. Pre-ticking either optional
- * box, or folding it into the first, would make it consent that was never
- * freely given — so both start empty and stay empty unless actively ticked.
+ * Two are required, one is not, and the difference is deliberate.
+ *
+ * The terms and the publication term are both conditions of holding an account:
+ * the platform exists to produce an open dataset, so an account that opts out of
+ * publication would have nothing to do here. They are still shown as two
+ * separate ticks rather than one, because publication is the consequential half
+ * and burying it inside "I accept the terms" would hide the thing that matters
+ * most. What protects the contributor is not a checkbox but the 30-day window
+ * before anything becomes publishable.
+ *
+ * Leaderboard visibility genuinely *is* optional consent (Art. 6(1)(a)), so it
+ * starts empty and stays empty unless actively ticked.
  */
 export function ConsentCheckboxes({ value, onChange, disabled }: ConsentCheckboxesProps) {
   const [consentText, setConsentText] = useState<string | null>(null);
@@ -67,8 +74,8 @@ export function ConsentCheckboxes({ value, onChange, disabled }: ConsentCheckbox
         />
         <span className="text-[11px] leading-relaxed text-muted-foreground group-hover:text-foreground transition-colors">
           {consentText ??
-            "I consent to my interactions being published as part of an open dataset under the CC-BY 4.0 licence, after filtering and PII removal."}{" "}
-          <span className="text-muted-foreground/70">(optional — you can change this any time in Settings)</span>
+            "I understand that my interactions may be published as part of an open dataset under the CC-BY 4.0 licence, after filtering and PII removal. Nothing is publishable until it has been here for 30 days."}{" "}
+          <span className="text-muted-foreground/70">(required — this is what the platform is for)</span>
         </span>
       </label>
 

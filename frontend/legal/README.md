@@ -42,6 +42,18 @@ Privacy § 5.3 also now promises post-release withdrawal by instance identifier.
 That is a commitment with an operational tail: releases must keep carrying
 `instanceId` (see `backend/export.go`) for it to be keepable.
 
+**Bigger change, needs review before launch:** publication moved from optional
+consent (Art. 6(1)(a)) to a required term of the service (Art. 6(1)(b)), because
+an opt-out account has nothing to do on a data-donation platform. Privacy § 5.1
+sets out the reasoning, including why it is deliberately *not* called consent
+(Art. 7(4): consent you cannot decline without losing the service is not freely
+given). The counterweight is the 30-day publication window in terms § 6.2 /
+privacy § 5.2, enforced by `PublicationEmbargo` in `backend/export.go`.
+
+Two things for counsel specifically: whether Art. 6(1)(b) holds for this service
+on a strict EDPB reading of "necessary", and whether 30 days is the right length.
+Both are load-bearing — if the basis fails, publication has no lawful ground.
+
 Keep the rule: a material edit to any of these documents — anything that changes
 what we may do with contributors' data, or what we require of them — needs review
 before it ships, not just a version bump.

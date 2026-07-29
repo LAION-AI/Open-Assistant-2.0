@@ -168,8 +168,10 @@ export function App() {
       setAuthError("Please enter a username with at least 3 characters.");
       return;
     }
-    if (!signupConsent.acceptedTerms) {
-      setAuthError("Please accept the Terms of Service and Privacy Policy to register.");
+    if (!signupConsent.acceptedTerms || !signupConsent.datasetConsent) {
+      setAuthError(
+        "Both required boxes must be ticked: the terms, and that contributed data may be published."
+      );
       return;
     }
 
@@ -325,7 +327,7 @@ export function App() {
 
                 <Button
                   type="submit"
-                  disabled={authLoading || !signupConsent.acceptedTerms}
+                  disabled={authLoading || !signupConsent.acceptedTerms || !signupConsent.datasetConsent}
                   className="w-full h-11 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-sm font-semibold shadow-lg shadow-indigo-600/10 disabled:opacity-50"
                 >
                   {authLoading ? "Initializing authenticator..." : "Register Passkey"}

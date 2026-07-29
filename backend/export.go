@@ -9,14 +9,23 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"backend/db"
 )
 
 // Dataset export.
 //
-// The hard rule here is that consent is a *query predicate*, not a step someone
-// remembers to perform. Interaction data lives in logs.db and consent lives in
+// Two hard rules, both expressed as query predicates rather than steps someone
+// remembers to perform:
+//
+//  1. the contributor must have accepted the publication term (see credStore);
+//  2. the instance must have sat here for the embargo period below.
+//
+// The embargo is what makes accepting publication at signup fair: an upload
+// nobody meant to make can be deleted, unhurried, before it is publishable at
+// all. Keep it in step with the "30 days" stated in frontend/legal/terms.md § 6.2
+// and privacy.md § 5.2 — the documents promise this number. Interaction data lives in logs.db and consent lives in
 // the frontend's user.db, so the two are joined at read time against the
 // read-only credential store: rows whose contributor is not in the consented
 // set are never assembled into a response in the first place. There is no
@@ -26,6 +35,11 @@ import (
 // *for the given document version*. A version bump therefore drops everyone
 // who has not re-consented, rather than silently carrying an old consent onto a
 // document they never saw.
+// PublicationEmbargo is how long an instance must have existed before it may be
+// exported. Deliberately generous: the point is that a contributor who uploaded
+// something by accident has time to notice without hurrying.
+const PublicationEmbargo = 30 * 24 * time.Hour
+
 func (c *credStore) consentedUserIDs(consentVersion string) (map[string]bool, error) {
 	h, err := c.handle()
 	if err != nil {
@@ -103,10 +117,19 @@ type ExportRow struct {
 // buildExport filters logs down to consenting contributors and pseudonymises
 // them. Exported for testing: this is the function that must never leak a
 // non-consenting row, so it is tested directly rather than through HTTP.
-func buildExport(logs []*db.LogEntry, consented map[string]bool, consentVersion string) []ExportRow {
+// buildExport also reports how many rows the embargo held back, so a release can
+// state it rather than quietly under-reporting its own size.
+func buildExport(logs []*db.LogEntry, consented map[string]bool, consentVersion string, now time.Time) ([]ExportRow, int) {
+	cutoff := now.Add(-PublicationEmbargo).Unix()
+	embargoed := 0
 	out := make([]ExportRow, 0, len(logs))
 	for _, l := range logs {
 		if l == nil || !consented[l.UserID] {
+			continue
+		}
+		// Too young to publish. Not an error — it becomes exportable on its own.
+		if l.CreatedAt > cutoff {
+			embargoed++
 			continue
 		}
 		out = append(out, ExportRow{
@@ -122,7 +145,7 @@ func buildExport(logs []*db.LogEntry, consented map[string]bool, consentVersion 
 			ConsentVersion: consentVersion,
 		})
 	}
-	return out
+	return out, embargoed
 }
 
 // makeExportHandler serves the consented corpus as JSON Lines.
@@ -172,10 +195,14 @@ func makeExportHandler(repo db.LogRepository, creds *credStore) http.HandlerFunc
 			return
 		}
 
-		rows := buildExport(logs, consented, consentVersion)
+		rows, embargoed := buildExport(logs, consented, consentVersion, time.Now())
 
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		w.Header().Set("X-Export-Rows", fmt.Sprint(len(rows)))
+		// Surfaced, not hidden: a caller should be able to see that rows exist
+		// which are simply not old enough yet.
+		w.Header().Set("X-Export-Embargoed", fmt.Sprint(embargoed))
+		w.Header().Set("X-Export-Embargo-Days", fmt.Sprint(int(PublicationEmbargo.Hours()/24)))
 		w.Header().Set("Content-Disposition", `attachment; filename="oa2-export.jsonl"`)
 		w.WriteHeader(http.StatusOK)
 
@@ -186,7 +213,7 @@ func makeExportHandler(repo db.LogRepository, creds *credStore) http.HandlerFunc
 				return
 			}
 		}
-		log.Printf("export: %d row(s) from %d consenting contributor(s), consent version %s",
-			len(rows), len(consented), consentVersion)
+		log.Printf("export: %d row(s) from %d consenting contributor(s), consent version %s; %d row(s) held back by the %d-day embargo",
+			len(rows), len(consented), consentVersion, embargoed, int(PublicationEmbargo.Hours()/24))
 	}
 }

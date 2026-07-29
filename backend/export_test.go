@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"backend/db"
 )
@@ -17,6 +18,12 @@ import (
 // The property under test throughout this file: a contributor who has not
 // consented, or whose consent predates the current document version, must never
 // appear in an export — regardless of how the export is invoked.
+
+// The fixtures use CreatedAt 1700000000; "now" for a test that wants those rows
+// publishable is therefore well past the embargo.
+func publishableNow() time.Time {
+	return time.Unix(1700000000, 0).Add(PublicationEmbargo).Add(time.Hour)
+}
 
 func logEntry(userID, conv string) *db.LogEntry {
 	return &db.LogEntry{
@@ -40,7 +47,7 @@ func TestBuildExportKeepsOnlyConsentingContributors(t *testing.T) {
 	}
 	consented := map[string]bool{"yes-user": true}
 
-	rows := buildExport(logs, consented, "1.0")
+	rows, _ := buildExport(logs, consented, "1.0", publishableNow())
 
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 exported rows, got %d", len(rows))
@@ -58,8 +65,8 @@ func TestBuildExportKeepsOnlyConsentingContributors(t *testing.T) {
 
 func TestExportNeverCarriesAccountIdentifiers(t *testing.T) {
 	// A conversation id from an imported trace, carrying a local path.
-	rows := buildExport([]*db.LogEntry{logEntry("secret-account-id", "/Users/someone/private-project")},
-		map[string]bool{"secret-account-id": true}, "1.0")
+	rows, _ := buildExport([]*db.LogEntry{logEntry("secret-account-id", "/Users/someone/private-project")},
+		map[string]bool{"secret-account-id": true}, "1.0", publishableNow())
 
 	blob, err := json.Marshal(rows)
 	if err != nil {
@@ -85,8 +92,8 @@ func TestInstanceIDIdentifiesExactlyOneRow(t *testing.T) {
 	if instanceRef(42) == instanceRef(43) {
 		t.Error("two rows collided onto the same instance id")
 	}
-	rows := buildExport([]*db.LogEntry{{ID: 7, UserID: "u1", ConversationID: "c1"}},
-		map[string]bool{"u1": true}, "1.0")
+	rows, _ := buildExport([]*db.LogEntry{{ID: 7, UserID: "u1", ConversationID: "c1"}},
+		map[string]bool{"u1": true}, "1.0", publishableNow())
 	if rows[0].InstanceID != instanceRef(7) {
 		t.Fatalf("exported instance id %q does not match the row it came from", rows[0].InstanceID)
 	}
@@ -279,5 +286,58 @@ func TestUploadGateFailsClosedOnAnUnreadableStore(t *testing.T) {
 	defer creds.Close()
 	if creds.uploadAllowed("u1") {
 		t.Error("gate opened when the credential store could not be read")
+	}
+}
+
+// --- publication embargo ----------------------------------------------------
+
+func TestEmbargoHoldsBackYoungInstances(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	old := now.Add(-PublicationEmbargo).Add(-time.Hour) // just past the embargo
+	fresh := now.Add(-time.Hour)                        // uploaded an hour ago
+
+	logs := []*db.LogEntry{
+		{ID: 1, UserID: "u1", ConversationID: "old", CreatedAt: old.Unix()},
+		{ID: 2, UserID: "u1", ConversationID: "fresh", CreatedAt: fresh.Unix()},
+	}
+
+	rows, embargoed := buildExport(logs, map[string]bool{"u1": true}, "1.0", now)
+
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly the aged row, got %d", len(rows))
+	}
+	if rows[0].InstanceID != instanceRef(1) {
+		t.Error("the wrong row survived the embargo")
+	}
+	if embargoed != 1 {
+		t.Errorf("embargoed count = %d, want 1", embargoed)
+	}
+}
+
+func TestEmbargoBoundaryIsInclusive(t *testing.T) {
+	// A row exactly at the cutoff has served its 30 days and is publishable;
+	// one second younger is not. Worth pinning: this is the line a contributor
+	// relies on when they delete something on day 29.
+	now := time.Unix(1_800_000_000, 0)
+	at := now.Add(-PublicationEmbargo).Unix()
+
+	rows, _ := buildExport([]*db.LogEntry{{ID: 1, UserID: "u1", CreatedAt: at}},
+		map[string]bool{"u1": true}, "1.0", now)
+	if len(rows) != 1 {
+		t.Error("a row that has served the full embargo was withheld")
+	}
+
+	rows, _ = buildExport([]*db.LogEntry{{ID: 1, UserID: "u1", CreatedAt: at + 1}},
+		map[string]bool{"u1": true}, "1.0", now)
+	if len(rows) != 0 {
+		t.Error("a row one second short of the embargo was published")
+	}
+}
+
+func TestEmbargoIsThirtyDays(t *testing.T) {
+	// The terms and the privacy policy both promise 30 days by name. If this
+	// constant changes, those documents are wrong and must change with it.
+	if days := int(PublicationEmbargo.Hours() / 24); days != 30 {
+		t.Fatalf("embargo is %d days; the legal documents say 30", days)
 	}
 }

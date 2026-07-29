@@ -716,6 +716,23 @@ async function checkSecondFactor(user: any, code: string): Promise<string | null
 }
 
 /**
+ * Both acceptances are conditions of the account existing. Publication is the
+ * service (see frontend/legal/privacy.md §5.1), so an account that declined it
+ * would have nothing to do here — but it is still recorded as its own versioned
+ * row rather than folded into the terms, because it is the consequential half
+ * and a release has to be able to point at it.
+ */
+function missingRequiredAcceptance(acceptedTerms: unknown, datasetAccepted: unknown): string | null {
+  if (acceptedTerms !== true) {
+    return "You must accept the Terms of Service and Privacy Policy";
+  }
+  if (datasetAccepted !== true) {
+    return "You must accept that contributed data may be published in the open dataset — this is what the platform is for. Nothing you upload becomes publishable for 30 days, so anything sent by mistake can still be deleted.";
+  }
+  return null;
+}
+
+/**
  * Write the two consent records a new account starts with.
  *
  * Terms acceptance is a precondition for the account existing at all; dataset
@@ -889,10 +906,9 @@ const server = serve({
         if (!EMAIL_RE.test(e)) return Response.json({ error: "Enter a valid email address" }, { status: 400 });
         if ((password || "").length < 8) return Response.json({ error: "Password must be at least 8 characters" }, { status: 400 });
         // Enforced server-side, not just in the form: an account may not exist
-        // without a recorded acceptance of the terms.
-        if (acceptedTerms !== true) {
-          return Response.json({ error: "You must accept the Terms of Service and Privacy Policy" }, { status: 400 });
-        }
+        // without both acceptances recorded.
+        const missing = missingRequiredAcceptance(acceptedTerms, datasetConsent);
+        if (missing) return Response.json({ error: missing }, { status: 400 });
         if (await dbAdapter.getUserByUsername(u)) return Response.json({ error: "Username already taken" }, { status: 400 });
         if (await dbAdapter.getUserByEmail(e)) return Response.json({ error: "Email already registered" }, { status: 400 });
 
@@ -1359,9 +1375,10 @@ const server = serve({
         if (!username || username.trim().length < 3) {
           return Response.json({ error: "Username must be at least 3 characters" }, { status: 400 });
         }
-        if (acceptedTerms !== true) {
-          return Response.json({ error: "You must accept the Terms of Service and Privacy Policy" }, { status: 400 });
-        }
+        // Checked here as well as at verify: no point putting someone through a
+        // WebAuthn ceremony that cannot end in an account.
+        const missing = missingRequiredAcceptance(acceptedTerms, datasetConsent);
+        if (missing) return Response.json({ error: missing }, { status: 400 });
 
         // Check if user already exists
         const existingUser = await dbAdapter.getUserByUsername(username);
@@ -1467,10 +1484,15 @@ const server = serve({
         const username = storedData.username!;
         const userId = storedData.userId!;
 
-        // Consent travelled inside the signed challenge (see /register/options),
-        // so a client cannot reach account creation without it.
-        if (storedData.acceptedTerms !== true) {
-          return Response.json({ error: "You must accept the Terms of Service and Privacy Policy" }, { status: 400 });
+        // Acceptances travelled inside the signed challenge (see
+        // /register/options), so a client cannot reach account creation without
+        // them, and cannot alter them in between.
+        const missingAcceptance = missingRequiredAcceptance(
+          storedData.acceptedTerms,
+          storedData.datasetConsent
+        );
+        if (missingAcceptance) {
+          return Response.json({ error: missingAcceptance }, { status: 400 });
         }
 
         // 1. Create / retrieve user
@@ -1757,11 +1779,18 @@ const server = serve({
         if (kind !== "dataset" && kind !== "terms") {
           return Response.json({ error: "Unknown consent kind" }, { status: 400 });
         }
-        // Terms acceptance can only be re-affirmed, never revoked in place —
-        // an account without accepted terms is closed, not downgraded.
-        if (kind === "terms" && granted !== true) {
+        // Neither acceptance can be revoked in place: both are conditions of the
+        // account existing, so the way out is deletion, not a downgrade. For
+        // publication specifically, deletion is also the *effective* remedy —
+        // within the 30-day window it prevents release outright.
+        if (granted !== true) {
           return Response.json(
-            { error: "To withdraw from the terms, request account deletion at contact@laion.ai" },
+            {
+              error:
+                kind === "terms"
+                  ? "To withdraw from the terms, delete your account in Settings → Danger Zone."
+                  : "Publication is part of the service, so it cannot be switched off. What removes data from every release is deleting it — individual uploads in My Uploads, all of it or the whole account in Settings → Danger Zone. Anything deleted within its first 30 days is never publishable at all.",
+            },
             { status: 400 }
           );
         }
@@ -1964,12 +1993,21 @@ const server = serve({
         }
 
         const rows = res.headers.get("X-Export-Rows") || "0";
-        console.log(`Admin ${user.username} exported ${rows} row(s) at consent version ${DATASET_CONSENT_VERSION}`);
+        const embargoed = res.headers.get("X-Export-Embargoed") || "0";
+        const embargoDays = res.headers.get("X-Export-Embargo-Days") || "";
+        console.log(
+          `Admin ${user.username} exported ${rows} row(s) at consent version ${DATASET_CONSENT_VERSION}; ` +
+            `${embargoed} held back by the ${embargoDays}-day embargo`
+        );
         return new Response(res.body, {
           headers: {
             "Content-Type": "application/x-ndjson",
             "Content-Disposition": `attachment; filename="oa2-export-v${DATASET_CONSENT_VERSION}.jsonl"`,
+            // Passed through so a caller can see that rows exist which are
+            // merely too young, rather than reading a short file as "that's all".
             "X-Export-Rows": rows,
+            "X-Export-Embargoed": embargoed,
+            "X-Export-Embargo-Days": embargoDays,
           },
         });
       } catch (err: any) {

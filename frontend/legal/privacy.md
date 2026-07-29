@@ -7,9 +7,11 @@ what legal basis, and what rights you have. It is provided under Articles 13
 and 14 GDPR (DSGVO).
 
 Open Assistant 2.0 exists to build an **openly published dataset of AI
-interactions**. Publication is the point of the project — so please read
-section 5 carefully. Publication only ever happens with your separate,
-explicit, revocable consent.
+interactions**. Publication is the point of the project, not an optional extra —
+so please read section 5 carefully before you sign up. Two things protect you
+there: you decide what to contribute at all, and **nothing you contribute can be
+published until it has been on the platform for 30 days**, which is your window
+to remove anything you did not mean to send.
 
 ---
 
@@ -75,14 +77,15 @@ it is strictly necessary, so no cookie banner is required.
 | Providing chat, the proxy and trace import; showing you your own history | §2.2 | Art. 6(1)(b) GDPR |
 | Security, abuse prevention, rate limiting, keeping the service running | §2.4, §2.1 | Art. 6(1)(f) GDPR — legitimate interest in a secure service |
 | Public leaderboard display of your username and contribution totals | §2.1 | Art. 6(1)(a) GDPR — consent. **Off unless you switch it on**, at signup or later in Settings, and revocable at any time |
-| **Publishing your interactions in an open dataset** | §2.2 | **Art. 6(1)(a) GDPR — your separate, explicit consent** |
+| **Publishing your interactions in an open dataset** | §2.2 | **Art. 6(1)(b) GDPR — performance of the contract you entered into.** Producing an open dataset is the service itself, not a side purpose; see §5.1 |
 | Processing feedback you send us | §2.3 | Art. 6(1)(f) GDPR |
 | Meeting legal obligations | as required | Art. 6(1)(c) GDPR |
 
-Where processing rests on consent, you may withdraw it at any time with effect
-for the future (Art. 7(3) GDPR). Withdrawal does not affect the lawfulness of
-processing carried out beforehand — and, for data already published, please
-read section 5.3.
+Where processing rests on consent — leaderboard visibility — you may withdraw it
+at any time with effect for the future (Art. 7(3) GDPR), and withdrawal does not
+affect the lawfulness of processing carried out beforehand. Publication does not
+rest on consent; §5.1 explains why, and §5.2–5.3 set out the control you have
+instead.
 
 ## 4. On-device PII redaction
 
@@ -113,32 +116,55 @@ someone else's personal data anywhere in the Service or in a release, tell us at
 
 ## 5. Dataset publication — the important part
 
-### 5.1 What consent covers
+### 5.1 What we publish, and on what basis
 
-If, and only if, you give dataset-release consent, we may include your
-interaction data (section 2.2) in publicly released datasets under the
-**Creative Commons Attribution 4.0 International (CC-BY 4.0)** licence. That
-means anyone worldwide may use, modify and redistribute the released data,
-including commercially, provided they give attribution.
+Interaction data you contribute (section 2.2) may be included in publicly
+released datasets under the **Creative Commons Attribution 4.0 International
+(CC-BY 4.0)** licence. Anyone worldwide may then use, modify and redistribute the
+released data, including commercially, provided they give attribution.
 
 Released data is intended for training and evaluating open AI models and for
 academic research, including a planned dataset and benchmark publication.
 
+**Why this is contract and not consent.** Building an open dataset is the entire
+service on offer here — it is what you sign up *for*, in the same way that
+publishing your post is the service a public forum provides. Publishing
+contributed data is therefore necessary to perform that contract (Art. 6(1)(b)
+GDPR), and accepting it is a condition of holding an account. We deliberately do
+**not** dress this up as consent: consent that you cannot refuse without losing
+the service would not be freely given (Art. 7(4) GDPR), and calling it consent
+anyway would misdescribe what is happening.
+
+That makes the safeguards in §5.2 and §5.3 the substance of your control, rather
+than a checkbox: what you contribute is up to you, and nothing is publishable for
+30 days.
+
 ### 5.2 What we do before publishing
 
-Released data is filtered before release: **a further automated PII detection and
-redaction pass over the whole corpus** — independent of whatever redaction you ran
+**The 30-day publication window.** An instance becomes eligible for release only
+once it has been on the platform for 30 days. Delete it before then and it is
+never published at all — this is enforced in the release query itself, not by
+someone remembering to check. Anything younger than 30 days is simply not
+exportable.
+
+Released data is also filtered before release: **a further automated PII detection
+and redaction pass over the whole corpus** — independent of whatever redaction you ran
 on your own device — removal of account identifiers (releases use pseudonymous
 participant identifiers, not your username or email), and exclusion of any
 interaction whose contributor has not consented. Each released instance carries a
 stable identifier so it can be reported and pulled later (§ 5.3). **We do not
 publish raw, unfiltered conversation logs.**
 
-### 5.3 Withdrawal, correction after release, and the honest limit
+### 5.3 Removal, correction after release, and the honest limit
 
-You can withdraw dataset consent at any time in Settings. From that moment your
-data is excluded from all future releases, and you can delete individual uploads
-yourself under "My Uploads".
+You can delete individual uploads under "My Uploads", all of your interaction data
+at once in Settings, or your entire account. Within the 30-day window that
+prevents publication outright; afterwards it removes the data from the working
+corpus, from every later release and from the copies we distribute.
+
+You may also object to processing based on our legitimate interests (Art. 21
+GDPR) and, for the publication itself, exercise your rights under Art. 16–18 GDPR
+— in practice, deleting the data achieves the same result immediately.
 
 **Reporting something in a release that has already gone out.** Every instance we
 publish carries a stable instance identifier. If personal data is found in a
@@ -187,6 +213,7 @@ what is described here.
 | Interaction data | Until you delete it — individually in "My Uploads", all at once in Settings, or with the account |
 | Consent records | Kept while the account exists as evidence that consent was validly obtained (Art. 7(1) GDPR), and deleted with the account |
 | Technical logs | Rotated out of the system journal in the ordinary course |
+| Uploaded but not yet publishable | The first 30 days after upload, during which deletion prevents publication entirely |
 | Published dataset releases | Permanent — see section 5.3 |
 
 ## 8. Your rights
@@ -204,8 +231,8 @@ You can exercise most of these yourself, immediately, without asking us:
 - **Delete your account entirely** — Settings → Danger Zone. This erases your
   account record, credentials, passkeys, two-factor secrets, consent records
   and every interaction you have contributed. It is immediate and irreversible.
-- **Grant or withdraw dataset consent**, and **turn leaderboard visibility on
-  or off** — Settings.
+- **Turn leaderboard visibility on or off** — Settings. This one *is* consent
+  (Art. 6(1)(a)) and it is off unless you switch it on.
 
 For a **data export**, or anything the app does not cover, email
 [contact@laion.ai](mailto:contact@laion.ai) — we act within one month, as

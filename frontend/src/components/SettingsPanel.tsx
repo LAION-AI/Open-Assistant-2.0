@@ -783,57 +783,32 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
       </CardContent>
     </Card>
 
-    {/* Dataset release consent. Withdrawal has to be exactly as easy as giving
-        it (GDPR Art. 7(3)), hence the same one-click toggle in both directions. */}
+    {/* Publication is part of the service, not a setting — so this card explains
+        the deal and the 30-day window instead of offering a toggle that would
+        misrepresent it. The real controls are directly below, in Danger Zone. */}
     <Card className="bg-card/40 backdrop-blur-md border border-border/80 shadow-xl overflow-hidden">
       <CardContent className="p-5">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0">
-              <Database className="w-4 h-4 text-emerald-400" />
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center flex-shrink-0">
+            <Database className="w-4 h-4 text-emerald-400" />
+          </div>
+          <div className="min-w-0 space-y-1.5">
+            <div className="text-sm font-semibold">Open Dataset Publication</div>
+            <div className="text-[11px] text-muted-foreground leading-relaxed">
+              Interactions you contribute may be published under CC-BY 4.0 after filtering
+              and PII removal. That is what this platform is for, so it is part of the
+              service rather than a switch.
             </div>
-            <div className="min-w-0">
-              <div className="text-sm font-semibold">Open Dataset Consent</div>
-              <div className="text-[11px] text-muted-foreground leading-relaxed">
-                {user.datasetConsentCurrent
-                  ? "Your interactions may be published in an open dataset under CC-BY 4.0, after filtering and PII removal."
-                  : "Your interactions stay private and are excluded from dataset releases."}{" "}
-                <a href="/privacy" target="_blank" className="text-indigo-400 hover:underline">
-                  How this works
-                </a>
-                {user.datasetConsentCurrent && (
-                  <span className="block mt-1 text-muted-foreground/70">
-                    Withdrawing stops all future releases, but cannot recall a release that is already public.
-                  </span>
-                )}
-              </div>
+            <div className="text-[11px] text-muted-foreground leading-relaxed">
+              <strong className="text-foreground">Your 30-day window.</strong> Nothing becomes
+              publishable until it has been here for 30 days. Delete it before then — in{" "}
+              <span className="text-foreground">My Uploads</span>, or all at once below — and
+              it is never released at all.{" "}
+              <a href="/privacy" target="_blank" className="text-indigo-400 hover:underline">
+                How this works
+              </a>
             </div>
           </div>
-          <button
-            onClick={async () => {
-              try {
-                const res = await fetch("/api/user/consent", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ kind: "dataset", granted: !user.datasetConsentCurrent }),
-                });
-                if (!res.ok) throw new Error("Failed to update consent");
-                const data = await res.json();
-                onUpdateUser(data.user);
-              } catch (err) {
-                console.error("Dataset consent toggle error:", err);
-              }
-            }}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 flex-shrink-0 cursor-pointer ${
-              user.datasetConsentCurrent ? "bg-emerald-600" : "bg-muted border border-border/50"
-            }`}
-          >
-            <span
-              className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${
-                user.datasetConsentCurrent ? "translate-x-6" : "translate-x-1"
-              }`}
-            />
-          </button>
         </div>
       </CardContent>
     </Card>

@@ -83,8 +83,8 @@ export function EmailAuth({
 
   const doRegister = async (e: FormEvent) => {
     e.preventDefault();
-    if (!consent.acceptedTerms) {
-      setError("Please accept the Terms of Service and Privacy Policy to register.");
+    if (!consent.acceptedTerms || !consent.datasetConsent) {
+      setError("Both required boxes must be ticked: the terms, and that contributed data may be published.");
       return;
     }
     const { ok, data } = await post("/api/auth/email/register", {
@@ -321,7 +321,7 @@ export function EmailAuth({
           {fieldPassword("Password (min 8 chars)", "new-password")}
           <ConsentCheckboxes value={consent} onChange={setConsent} disabled={loading} />
           {alerts}
-          {submitBtn("Create account", !consent.acceptedTerms)}
+          {submitBtn("Create account", !consent.acceptedTerms || !consent.datasetConsent)}
           {backBtn}
         </form>
       )}

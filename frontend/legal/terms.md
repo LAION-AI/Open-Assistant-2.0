@@ -24,7 +24,11 @@ and no guarantee of availability.
 
 ## 2. Who may use it
 
-You must be **at least 18 years old**. One account per person; accounts are
+You must be **at least 18 years old**, and you must accept these terms, the
+[Privacy Policy](/privacy) and the publication term in § 6.2 — the platform
+exists to produce an open dataset, so there is no version of an account that
+opts out of that. What you keep is control over *what* you contribute and a
+30-day window in which to remove it (§ 6.2). One account per person; accounts are
 personal and must not be shared or transferred. You are responsible for
 everything that happens under your account, and for keeping your credentials,
 passkeys, recovery codes and API keys secure.
@@ -152,22 +156,37 @@ content for the purpose of running the Service and showing your own history
 back to you. This licence lasts as long as the content is stored, and ends when
 you delete it.
 
-**6.2 Licence to publish — only with separate consent.** Publication of your
-interaction data as part of an open dataset happens **only** if you give
-dataset-release consent, which is asked for separately from these terms and can
-be withdrawn at any time in Settings. If you give it, you grant everyone a
-licence to the released data under the
+**6.2 Licence to publish, and the 30-day window.** Publication is what this
+platform is for, so it is part of the service rather than an extra you switch on:
+interaction data you contribute may be included in public dataset releases under
+the
 [Creative Commons Attribution 4.0 International licence (CC-BY 4.0)](https://creativecommons.org/licenses/by/4.0/),
-and you grant LAION the right to distribute it on that basis.
+and you grant LAION the right to distribute it on that basis. You accept this
+when you create an account — an account that contributed nothing publishable
+would defeat the point of the project.
 
-**6.3 What you promise when you consent.** That the content is yours to license
-— that you wrote it (or hold the rights), that you have complied with section 4,
-and that you have not knowingly included other people's personal data or
-confidential material belonging to someone else, such as an employer.
+Your control over it is not a checkbox but two stronger things:
 
-**6.4 Withdrawal.** Withdrawing consent removes your data from all future
-releases and you may delete your uploads at any time. It cannot recall a
-dataset release that is already public. Section 5.3 of the
+- **Nothing is published until it is 30 days old.** An instance becomes eligible
+  for release only after it has been on the platform for 30 days. Delete it
+  before then — one click in "My Uploads", or all of it in Settings — and it is
+  never publishable at all. This window exists for exactly the case where
+  something was uploaded that you did not mean to upload.
+- **You choose what to upload in the first place.** Chat is not automatically
+  contributed as traces are; imports are per-conversation; and you can hold an
+  account and upload nothing.
+
+**6.3 What you promise about what you contribute.** That the content is yours to
+license — that you wrote it (or hold the rights), that you have complied with
+section 4, and that you have not knowingly included other people's personal data
+or confidential material belonging to someone else, such as an employer.
+
+**6.4 Removing what you contributed.** Deleting an instance within its 30-day
+window means it is never published. After that window it may already be part of a
+release: deleting it still removes it from the working corpus, from every later
+release, and from the copies we distribute, and a published instance can be
+reported for withdrawal at any time by its instance identifier (§ 4.4). What
+deletion cannot do is recall a release that is already public. Section 5.3 of the
 [Privacy Policy](/privacy) explains this in full; please make sure you have
 understood it before consenting.
 

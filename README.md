@@ -66,10 +66,16 @@ engineering one, so the two are kept separate in both the UI and the database:
   everyone again.
 - **[Impressum](frontend/legal/impressum.md)** — statutory disclosure under
   § 5 DDG, reachable without an account.
-- **Dataset-release consent** — a distinct opt-in, off unless ticked,
-  revocable in Settings at any time. It names the licence
+- **The publication term** — accepted at signup and required, because producing
+  an open dataset is what the platform is for. It names the licence
   ([CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/)) and states plainly
-  that an already-published release cannot be recalled.
+  that an already-published release cannot be recalled. Publication rests on
+  Art. 6(1)(b) GDPR (contract), not consent — bundled consent would not be freely
+  given, and the privacy policy says so rather than pretending otherwise.
+- **A 30-day publication window** — nothing is exportable until it has been on
+  the platform for 30 days, enforced in the release query. Delete it before then
+  and it is never published, which is what makes accepting publication up front
+  fair.
 - **[DATASHEET.md](DATASHEET.md)** — the corpus documented following
   *Datasheets for Datasets*, maintained alongside the code that collects it.
 

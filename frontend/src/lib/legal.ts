@@ -15,12 +15,17 @@ import { join } from "path";
 export const TERMS_VERSION = "1.1";
 
 /**
- * Bumping this invalidates prior dataset consent — never reuse a consent for a
- * new purpose. Deliberately *not* bumped alongside TERMS_VERSION 1.1: that
- * change added uploader warranties and did not alter what publication means, so
- * existing dataset consents still cover the purpose they were given for.
+ * Version of the publication term a user accepted.
+ *
+ * 2.0 is a different thing from 1.0, which is why it is a new number rather than
+ * a bump: 1.0 was an optional, revocable consent to publication; 2.0 is
+ * acceptance of publication as part of the service (Art. 6(1)(b)), required to
+ * hold an account, paired with the 30-day window before anything is publishable.
+ * Acceptances recorded under 1.0 do not carry over — the export filters on an
+ * exact version match, so a 1.0 row stays unpublishable until its owner accepts
+ * the current terms.
  */
-export const DATASET_CONSENT_VERSION = "1.0";
+export const DATASET_CONSENT_VERSION = "2.0";
 
 export interface LegalDoc {
   slug: string;
@@ -66,13 +71,18 @@ export function getLegalDoc(slug: string): LegalDoc | null {
 export const LEGAL_SLUGS = Object.keys(DOCS);
 
 /**
- * The consent text shown next to the dataset checkbox. It lives here rather
- * than in the component because it is the wording a user actually consented
- * to, and it has to stay in lockstep with DATASET_CONSENT_VERSION.
+ * The wording shown next to the publication checkbox at signup. It lives here
+ * rather than in the component because it is what a user actually accepted, and
+ * it has to stay in lockstep with DATASET_CONSENT_VERSION.
+ *
+ * The 30 days are stated because they are the substance of the deal: publication
+ * is not optional, the window is what makes that fair. The number is enforced by
+ * PublicationEmbargo in backend/export.go — change one and you must change both.
  */
 export const DATASET_CONSENT_TEXT =
-  "I consent to my interactions (prompts, responses and uploaded traces) being " +
-  "published as part of an open dataset under the CC-BY 4.0 licence, after " +
-  "filtering and PII removal. I understand this is optional, that I can " +
-  "withdraw it at any time in Settings, and that withdrawal cannot recall a " +
-  "release that has already been published.";
+  "I understand that my interactions (prompts, responses and uploaded traces) " +
+  "may be published as part of an open dataset under the CC-BY 4.0 licence, " +
+  "after filtering and PII removal — this is what the platform is for. Nothing " +
+  "I contribute becomes publishable until it has been here for 30 days, so I can " +
+  "delete anything I did not mean to upload before it can be released. Once a " +
+  "release is public it cannot be recalled.";

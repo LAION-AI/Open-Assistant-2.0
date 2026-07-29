@@ -85,10 +85,36 @@ describe("legal documents", () => {
     expect(md).toContain("None of the three is perfect, which is why there are three");
   });
 
-  test("the consent text names the licence and that it is revocable", () => {
+  test("the publication text names the licence, the window and the limit", () => {
+    // Publication is not revocable any more, so what the wording has to carry is
+    // the licence, the 30 days that make accepting it fair, and the fact that a
+    // release cannot be undone.
     expect(DATASET_CONSENT_TEXT).toContain("CC-BY 4.0");
-    expect(DATASET_CONSENT_TEXT).toContain("withdraw");
+    expect(DATASET_CONSENT_TEXT).toContain("30 days");
+    expect(DATASET_CONSENT_TEXT).toContain("cannot be recalled");
     expect(DATASET_CONSENT_VERSION.length).toBeGreaterThan(0);
+  });
+
+  test("publication is described as contract, not as consent it cannot be", () => {
+    const md = flat("privacy");
+    expect(md).toContain("Art. 6(1)(b)");
+    // The reasoning must stay visible: bundled consent would not be freely given,
+    // so the document says why it is not calling this consent.
+    expect(md).toContain("Art. 7(4)");
+    expect(md).toContain("would not be freely given");
+  });
+
+  test("the 30-day window is promised in both documents", () => {
+    // backend/export.go enforces this number; TestEmbargoIsThirtyDays pins it
+    // from the other side.
+    expect(flat("privacy")).toContain("only once it has been on the platform for 30 days");
+    expect(flat("terms")).toContain("Nothing is published until it is 30 days old");
+  });
+
+  test("the terms state that acceptance is a condition of the account", () => {
+    const md = flat("terms");
+    expect(md).toContain("there is no version of an account that opts out of that");
+    expect(md).toContain("at least 18 years old");
   });
 
   test("documents are cached, so repeated reads are the same object", () => {

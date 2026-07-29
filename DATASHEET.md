@@ -78,16 +78,30 @@ Volunteer contributors with accounts on the platform. No payment is made.
 **Over what timeframe?**
 Collection began with the v0.1.0 deployment in July 2026 and is ongoing.
 
-**Were contributors informed and did they consent?**
-Yes, and the two are recorded separately:
+**Were contributors informed, and on what legal basis is publication done?**
+Informed at signup, in two separately-ticked, separately-recorded acceptances —
+both required, because a platform whose purpose is an open dataset has nothing to
+offer an account that opts out of publication:
 
-- **Terms + privacy acceptance** is required to create an account. The accepted
-  document version and timestamp are stored per user.
-- **Dataset-release consent** is a distinct, unbundled opt-in, presented with
-  the licence named (CC-BY 4.0) and with an explicit statement that published
-  releases cannot be recalled. It is off unless actively granted, revocable at
-  any time in Settings, and every grant and withdrawal is written to a
-  `consent_events` audit table with the document version and timestamp.
+- **Terms + privacy acceptance**, with the accepted document version and
+  timestamp stored per user.
+- **The publication term**, presented with the licence named (CC-BY 4.0), the
+  30-day window stated, and the non-recall limit stated. Every acceptance is
+  written to a `consent_events` audit table with document version, timestamp and
+  origin.
+
+Publication rests on **Art. 6(1)(b) GDPR (performance of the contract)**, not on
+consent. This is deliberate and is documented as such in the privacy policy §5.1:
+consent that a user cannot decline without losing access to the service would not
+be freely given (Art. 7(4) GDPR), so describing it as consent would misstate what
+is happening. Researchers reusing this corpus should cite the basis accurately —
+contributors accepted publication as the platform's purpose, and were protected
+by the controls below rather than by an opt-out.
+
+**The 30-day publication window.** No instance is exportable until it has existed
+for 30 days, enforced in the release query (`PublicationEmbargo` in
+`backend/export.go`), not by review. Deletion within that window means an instance
+is never publishable at all — the safeguard for material uploaded by mistake.
 
 Contributors can erase their contributions at any time — individually ("My
 Uploads"), all at once, or by deleting their account entirely, all self-service
@@ -112,10 +126,11 @@ not by review.
 
 Before any public release:
 
-- interactions from non-consenting contributors are excluded — enforced in the
-  export query itself, which joins against the consent record and drops anyone
-  whose consent is absent, withdrawn, or attached to a superseded version of the
-  consent document. There is no code path that exports unfiltered rows;
+- instances younger than 30 days are excluded outright (see Collection Process);
+- interactions from contributors without a current recorded acceptance are
+  excluded — enforced in the export query itself, which joins against the
+  acceptance record and drops anyone whose acceptance is absent or attached to a
+  superseded document version. There is no code path that exports unfiltered rows;
 - each instance carries a stable pseudonymous **instance identifier**, so a
   specific published row can be reported and withdrawn after release (see
   Maintenance);

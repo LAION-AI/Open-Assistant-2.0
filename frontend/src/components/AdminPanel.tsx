@@ -279,9 +279,11 @@ export function AdminPanel() {
             <div className="min-w-0">
               <div className="text-sm font-semibold">Export consented dataset</div>
               <div className="text-[11px] text-muted-foreground leading-relaxed">
-                JSONL of interactions from contributors who consented to publication, with
-                pseudonymous participant ids in place of account ids. Everyone else is excluded
-                by the query, not by review.
+                JSONL with pseudonymous participant and instance ids in place of account ids.
+                Two filters are applied by the query rather than by review: contributors
+                without a current acceptance on record are excluded, and so is anything
+                uploaded in the last 30 days — the window in which a contributor can still
+                delete something they did not mean to send.
               </div>
             </div>
           </div>
