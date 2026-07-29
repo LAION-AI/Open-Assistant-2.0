@@ -428,7 +428,7 @@ export function App() {
               Open Assistant 2.0
             </span>
             {displayVersion && (
-              <span className="rounded-md border border-border/60 bg-muted/60 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-muted-foreground">
+              <span className="translate-y-px rounded-md border border-border/60 bg-muted/60 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-muted-foreground">
                 {displayVersion}
               </span>
             )}

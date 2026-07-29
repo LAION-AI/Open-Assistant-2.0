@@ -1,6 +1,6 @@
 {
   "name": "open-assistant-2",
-  "version": "0.17.0",
+  "version": "0.17.0-a",
   "private": true,
   "type": "module",
   "scripts": {

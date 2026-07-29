@@ -554,7 +554,7 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
                     href="https://github.com/PrismML-Eng/Bonsai-demo"
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white shadow-lg shadow-emerald-600/15 transition hover:bg-emerald-500"
+                    className="inline-flex h-11 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-emerald-600 px-3 text-xs font-semibold text-white shadow-lg shadow-emerald-600/15 transition hover:bg-emerald-500 sm:gap-2 sm:px-4 sm:text-sm"
                   >
                     <Sprout className="h-4 w-4" />
                     <span>Start with Bonsai 27B 1-bit</span>
