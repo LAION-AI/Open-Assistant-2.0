@@ -924,7 +924,16 @@ const server = serve({
         }
         // No SMTP configured — auto-verify and sign in.
         await dbAdapter.setEmailVerified(user.id, true);
-        return loginResponse(user, { success: true, verified: true, user: { id: user.id, username: user.username } }, req);
+        const registeredUser = await dbAdapter.getUser(user.id);
+        return loginResponse(
+          user,
+          {
+            success: true,
+            verified: true,
+            user: clientUser(registeredUser ?? user),
+          },
+          req
+        );
       } catch (err: any) {
         console.error("email register error:", err);
         return Response.json({ error: err.message }, { status: 500 });
@@ -1561,7 +1570,10 @@ const server = serve({
         }));
 
         return new Response(
-          JSON.stringify({ verified: true, user: { id: user.id, username: user.username } }),
+          JSON.stringify({
+            verified: true,
+            user: clientUser((await dbAdapter.getUser(user.id)) ?? user, { hasPasskey: true }),
+          }),
           { headers }
         );
       } catch (err: any) {

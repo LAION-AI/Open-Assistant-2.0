@@ -5,6 +5,27 @@ All notable changes to Open Assistant 2.0 are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] — 2026-07-29
+
+Mobile polish and a cleaner first-run experience.
+
+### Changed
+
+- Reworked the authenticated app shell for phones and tablets, with compact
+  header actions and a dedicated bottom navigation that remains usable with all
+  five admin tabs.
+- Replaced the tiled moving logo with a subtle indigo, sky and violet ambient
+  mesh over a fading grid. Its eased alternating motion has no visible reset
+  frame, respects reduced-motion preferences and adapts to light and dark mode.
+
+### Fixed
+
+- Prevented horizontal overscroll and half-clipped controls across chat,
+  settings, uploads, onboarding dialogs, banners and long conversation content.
+- New accounts now receive their complete, freshly stored acceptance state in
+  the registration response, so users are not immediately asked to accept the
+  same Terms and Privacy Policy a second time.
+
 ## [0.15.0] — 2026-07-29
 
 Legal foundation and consent plumbing: everything needed to collect data
