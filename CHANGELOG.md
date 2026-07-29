@@ -5,6 +5,66 @@ All notable changes to Open Assistant 2.0 are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] — 2026-07-29
+
+Legal foundation and consent plumbing: everything needed to collect data
+defensibly and to publish it without guessing what contributors agreed to.
+
+### Added
+
+**Legal documents** — served in-app at `/impressum`, `/privacy` and `/terms`,
+readable without an account, from Markdown in `frontend/legal/` so the repository
+and the running site share one source of truth.
+- **Impressum** under § 5 DDG / § 18 MStV with LAION e.V.'s registered details.
+- **Privacy Policy** (DSGVO Art. 13) covering all three ingestion routes, the
+  BYOE endpoint your prompts travel to, the Hugging Face CDN request the
+  redaction model makes, and Hetzner as host with the server in Helsinki.
+- **Terms of Service**, including § 4: a *warranty* that the uploader has checked
+  the third-party terms covering every imported trace, and a *request* — no
+  account consequence — that they review each upload for personal data.
+- **[DATASHEET.md](DATASHEET.md)** following *Datasheets for Datasets*, for the
+  planned NeurIPS submission.
+
+**Publication model**
+- Accepting the terms and the publication term is required to create an account.
+  Publication rests on Art. 6(1)(b) GDPR — producing an open dataset is the
+  service — and the policy states why it is deliberately not called consent.
+- **A 30-day window before anything is publishable**, enforced as a predicate in
+  the release query. Delete an upload inside its window and it is never published.
+- A header countdown, on every page, showing when the soonest contribution
+  crosses that line.
+- Versioned acceptance records plus an append-only `consent_events` audit trail
+  (version, timestamp, origin), so a release can be traced to what permitted it.
+
+**Dataset export** (admin) — JSONL gated on both rules above, with pseudonymous
+participant, conversation and instance identifiers instead of account ids, and a
+per-instance flag recording whether on-device redaction ran. Instance identifiers
+exist so a published row can be reported and withdrawn later.
+
+**Erasure**
+- Self-service: delete all contributions, or the entire account with
+  credentials, 2FA secrets and consent records. Interaction data goes first, so
+  an account row can never outlive its logs.
+- Admins can delete accounts from the users table, with typed confirmation.
+
+**Repository**
+- Live badges for code contributors, data contributors, traces and tokens.
+
+### Changed
+
+- **Registration is passkey-first.** Email + password is a link underneath,
+  labelled with what it costs: a second factor before the first upload — now
+  enforced on both the session and API-key upload paths, not just stated.
+- **Leaderboard visibility is opt-in**, off by default, with a one-shot migration
+  switching existing accounts off. It is the one thing here that genuinely is consent.
+- Minimum age raised from 16 to 18.
+
+### Fixed
+
+- The deploy rsync deleted podman's container store on every run — it lived
+  inside the sync target — which took the site down mid-release. `/containers*`
+  is now excluded alongside `/data`.
+
 ## [0.1.0] — 2026-07-28
 
 First tagged release: the platform is deployed, end-to-end functional, and
