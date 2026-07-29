@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**Version 1.0 — effective 29 July 2026**
+**Version 1.1 — effective 29 July 2026**
 
 This notice explains what personal data Open Assistant 2.0 processes, why, on
 what legal basis, and what rights you have. It is provided under Articles 13
@@ -96,9 +96,16 @@ Two points of honesty about this feature:
   (`huggingface.co`) the first time you use it. That download is a request to a
   third party and will expose your IP address to them. Your *text* is never
   sent there.
-- Automatic redaction is a statistical model, not a guarantee. Review the
-  result before you upload. We also filter data again before any public
+- Automatic redaction is a statistical model, **not a guarantee**. It is offered
+  as an aid and will miss things. Review the result yourself before you upload —
+  the [Terms](/terms) §4 make checking each upload your responsibility, and
+  running the tool does not replace that. We filter again before any public
   release, but neither step is perfect.
+
+If you find personal data in something you have already uploaded, delete it
+straight away ("My Uploads", or Settings for everything at once). If you find
+someone else's personal data anywhere in the Service or in a release, tell us at
+[contact@laion.ai](mailto:contact@laion.ai) and we will act on it.
 
 ## 5. Dataset publication — the important part
 

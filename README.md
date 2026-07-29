@@ -72,9 +72,12 @@ engineering one, so the two are kept separate in both the UI and the database:
   that an already-published release cannot be recalled.
 - **[DATASHEET.md](DATASHEET.md)** — the corpus documented following
   *Datasheets for Datasets*, maintained alongside the code that collects it.
-- **[ethics/](ethics/)** — charter for LAION's internal Research Ethics
-  Committee and the review protocol for this corpus. Internal committee review,
-  not an accredited IRB, and the documents say so.
+
+Uploading is the contributor's call and the contributor's responsibility:
+[terms §4](frontend/legal/terms.md) requires them to check the third-party terms
+covering every trace they import and to review each upload for personal data.
+On-device redaction is offered as an aid, explicitly not as a warranty that
+anything is clean.
 
 Every grant and withdrawal is appended to a `consent_events` table with the
 document version, timestamp and origin, so a release can always be traced back

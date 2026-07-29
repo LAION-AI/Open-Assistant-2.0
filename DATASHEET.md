@@ -93,16 +93,20 @@ Contributors can erase their contributions at any time — individually ("My
 Uploads"), all at once, or by deleting their account entirely, all self-service
 in the app. Erased data leaves the working corpus and every subsequent release.
 
-**Ethical review.** Reviewed by LAION's internal Research Ethics Committee under
-[protocol 001](ethics/PROTOCOL-001-interaction-corpus.md), which operates under a
-published [charter](ethics/CHARTER.md) requiring that a majority of voting
-members on any decision be independent of the work under review.
+**Ethical review.** No institutional review board review was sought or obtained.
+LAION is a nonprofit research association, not a medical or clinical institution,
+and German law imposes no ethics-review requirement on non-medical,
+non-interventional research of this kind; the project is not US-federally funded
+and so falls outside 45 CFR 46.
 
-LAION is a nonprofit research association and does **not** operate an accredited
-institutional review board; German law requires no ethics review for non-medical
-research of this kind. This review should be cited as internal committee review,
-never as IRB approval. The charter, the protocol and the signed decision record —
-including any dissent — are public in [`ethics/`](ethics/).
+Participant protection rests instead on measures that are documented and
+checkable rather than on a review body: participation is voluntary and
+self-selected among adults; publication requires separate, unbundled, revocable
+consent recorded with its document version; contributors can erase their
+contributions or their whole account themselves at any time; releases carry
+pseudonymous identifiers rather than account identifiers; and no interaction is
+released without a consent record permitting it — enforced by the export query,
+not by review.
 
 ## Preprocessing / cleaning / labeling
 
@@ -136,7 +140,8 @@ contributor redacts a stored conversation afterwards. Two cautions for anyone
 using the field:
 
 - It records that redaction **ran**, not that the instance is clean. The model
-  is statistical, and `true` is not a guarantee.
+  is statistical, `true` is not a guarantee, and the terms are explicit that it
+  is offered as an aid rather than a warranty.
 - By the same token `false` marks instances more likely to contain residual PII.
   That is useful for filtering and for reporting coverage, but it also makes
   those instances easier to single out — weigh that before using the field to
@@ -197,7 +202,6 @@ recalled — contributors are told this before consenting, and it is stated in
 
 ## Related documents
 
-- [Ethics charter and protocol 001](ethics/)
 - [Terms of Service](frontend/legal/terms.md)
 - [Privacy Policy](frontend/legal/privacy.md)
 - [Impressum](frontend/legal/impressum.md)

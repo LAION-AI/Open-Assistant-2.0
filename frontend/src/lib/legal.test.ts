@@ -46,6 +46,30 @@ describe("legal documents", () => {
     expect(md.toLowerCase()).toContain("cannot be recalled");
   });
 
+  // The documents are hard-wrapped, so a clause can straddle a newline. Compare
+  // against collapsed whitespace: the assertion is about the wording, not the
+  // line breaks, and it must not fail the next time a paragraph is re-flowed.
+  const flat = (slug: string) => getLegalDoc(slug)!.markdown.replace(/\s+/g, " ");
+
+  test("the terms put the third-party and PII checks on the uploader", () => {
+    const md = flat("terms");
+    // The warranties themselves.
+    expect(md).toContain("You warrant that, before uploading, you have checked the current terms of every third-party service a trace came from");
+    expect(md).toContain("You warrant that you have reviewed each upload for personal data");
+    // Redaction must never be presented as a guarantee.
+    expect(md).toContain("offered as an aid and comes with no warranty of any kind");
+    // Nor may running it be treated as discharging the uploader's own duty.
+    expect(md).toContain("does not discharge your obligation");
+    // And the consequence must stay stated.
+    expect(md).toContain("immediate and permanent deletion of your account");
+  });
+
+  test("the privacy policy points at the uploader's own duty to check", () => {
+    const md = flat("privacy");
+    expect(md).toContain("not a guarantee");
+    expect(md).toContain("make checking each upload your responsibility");
+  });
+
   test("the consent text names the licence and that it is revocable", () => {
     expect(DATASET_CONSENT_TEXT).toContain("CC-BY 4.0");
     expect(DATASET_CONSENT_TEXT).toContain("withdraw");

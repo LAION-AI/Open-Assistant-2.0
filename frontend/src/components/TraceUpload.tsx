@@ -216,6 +216,10 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
   const [redactState, setRedactState] = useState<"idle" | "loading" | "running" | "done">("idle");
   const [redactStatus, setRedactStatus] = useState("");
   const [autoRedact, setAutoRedact] = useState(true);
+  // Terms § 4 puts the checks on the uploader. Asking here, at the moment of
+  // upload, is the only place the acknowledgement means anything — and it has to
+  // be re-ticked for each batch rather than remembered from a past session.
+  const [acknowledged, setAcknowledged] = useState(false);
 
   const folderRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLInputElement>(null);
@@ -415,6 +419,7 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
       if (!res.ok) throw new Error(data.error || "Upload failed");
       setResult(`Uploaded ${data.saved} trace${data.saved === 1 ? "" : "s"}${autoRedact ? " (PII redacted)" : ""}.`);
       setEntries([]);
+      setAcknowledged(false);
       onUploaded();
     } catch (err: any) {
       setError(err.message || "Upload failed");
@@ -586,8 +591,28 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
               ))}
             </div>
 
+            <label className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-500/5 border border-amber-500/20 cursor-pointer select-none">
+              <Checkbox
+                checked={acknowledged}
+                onCheckedChange={v => setAcknowledged(v === true)}
+                disabled={uploading || redactBusy}
+                className="mt-0.5"
+              />
+              <span className="text-[11px] leading-relaxed text-muted-foreground">
+                I have checked these conversations myself: sharing them is permitted by the
+                terms of the tools and providers they came from, and I have reviewed them for
+                personal data — mine and other people's — and removed what I found. I
+                understand the redaction tool is an aid, not a guarantee, and that uploading
+                in breach of{" "}
+                <a href="/terms" target="_blank" className="text-indigo-400 hover:underline">
+                  § 4 of the Terms
+                </a>{" "}
+                can lead to permanent deletion of my account.
+              </span>
+            </label>
+
             <div className="flex items-center gap-4 flex-wrap">
-              <Button onClick={upload} disabled={uploading || redactBusy || selected.length === 0} className="h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold gap-2">
+              <Button onClick={upload} disabled={uploading || redactBusy || selected.length === 0 || !acknowledged} className="h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold gap-2 disabled:opacity-50">
                 {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
                 <span>{uploading ? (redactBusy ? "Redacting…" : "Uploading…") : `Upload ${selected.length} selected`}</span>
               </Button>

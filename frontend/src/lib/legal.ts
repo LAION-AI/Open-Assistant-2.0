@@ -12,9 +12,14 @@ import { join } from "path";
  */
 
 /** Bumping this asks existing users to accept the terms again at next sign-in. */
-export const TERMS_VERSION = "1.0";
+export const TERMS_VERSION = "1.1";
 
-/** Bumping this invalidates prior dataset consent — never reuse a consent for a new purpose. */
+/**
+ * Bumping this invalidates prior dataset consent — never reuse a consent for a
+ * new purpose. Deliberately *not* bumped alongside TERMS_VERSION 1.1: that
+ * change added uploader warranties and did not alter what publication means, so
+ * existing dataset consents still cover the purpose they were given for.
+ */
 export const DATASET_CONSENT_VERSION = "1.0";
 
 export interface LegalDoc {

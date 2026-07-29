@@ -26,9 +26,18 @@ version each user accepted is recorded against the constants in
 
 ## Review status
 
-Reviewed by counsel. Keep it that way: a material edit to any of these
-documents — anything that changes what we may do with contributors' data —
-needs the same review before it ships, not just a version bump.
+Reviewed by counsel at version 1.0.
+
+**Changed since that review:** terms and privacy version 1.1 add § 4 of the
+terms (uploader warranties on third-party terms of service and on PII, the
+no-warranty statement for on-device redaction, and account termination as the
+consequence) and the matching paragraph in privacy § 4. Have counsel confirm
+that wording — in particular that § 4.4 and the liability clause in § 9 sit
+correctly against § 307 and § 309 BGB for consumers.
+
+Keep the rule: a material edit to any of these documents — anything that changes
+what we may do with contributors' data, or what we require of them — needs review
+before it ships, not just a version bump.
 
 Open items tracked elsewhere: the `[TO CONFIRM]` / `[TO DECIDE]` markers in
 [`../../DATASHEET.md`](../../DATASHEET.md), which concern the dataset release
