@@ -51,6 +51,19 @@ type FeedbackEntry struct {
 	ResolvedAt int64  `json:"resolvedAt"`
 }
 
+// EmbargoStatus is where one user's contributions stand relative to the
+// publication embargo: what is still inside its window, what has passed out of
+// it, and when the next one graduates. Drives the countdown the app shows so a
+// contributor always knows how long they still have to change their mind.
+type EmbargoStatus struct {
+	Pending     int `json:"pending"`     // uploaded, still inside the window
+	Publishable int `json:"publishable"` // window elapsed; may appear in a release
+	// Unix seconds of the oldest pending row, or 0 when nothing is pending. The
+	// caller adds the embargo to get the moment it becomes publishable — the
+	// embargo length lives with the export code, not in the database layer.
+	OldestPendingAt int64 `json:"oldestPendingAt"`
+}
+
 type LeaderboardEntry struct {
 	UserID      string `json:"userId"`
 	TotalTokens int64  `json:"totalTokens"`
@@ -88,6 +101,10 @@ type LogRepository interface {
 	SaveFeedback(ctx context.Context, entry *FeedbackEntry) error
 	GetFeedback(ctx context.Context, status string) ([]*FeedbackEntry, error)
 	UpdateFeedbackStatus(ctx context.Context, id int64, status string) (int64, error)
+
+	// EmbargoStatusByUser counts a user's rows either side of `cutoff` (the
+	// created_at below which a row has served the embargo).
+	EmbargoStatusByUser(ctx context.Context, userID string, cutoff int64) (*EmbargoStatus, error)
 
 	// Leaderboard: aggregate per-user token totals and trace counts.
 	GetLeaderboard(ctx context.Context) ([]*LeaderboardEntry, error)

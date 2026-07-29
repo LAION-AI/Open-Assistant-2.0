@@ -294,6 +294,23 @@ func (r *SQLiteRepository) UpdateFeedbackStatus(ctx context.Context, id int64, s
 	return n, nil
 }
 
+func (r *SQLiteRepository) EmbargoStatusByUser(ctx context.Context, userID string, cutoff int64) (*EmbargoStatus, error) {
+	// One pass, three answers. COALESCE on the MIN because a user with nothing
+	// pending yields NULL, which is a legitimate state and not an error.
+	const query = `SELECT
+		COALESCE(SUM(CASE WHEN created_at > ? THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN created_at <= ? THEN 1 ELSE 0 END), 0),
+		COALESCE(MIN(CASE WHEN created_at > ? THEN created_at END), 0)
+		FROM interaction_logs WHERE user_id = ?`
+
+	var st EmbargoStatus
+	if err := r.db.QueryRowContext(ctx, query, cutoff, cutoff, cutoff, userID).
+		Scan(&st.Pending, &st.Publishable, &st.OldestPendingAt); err != nil {
+		return nil, err
+	}
+	return &st, nil
+}
+
 func (r *SQLiteRepository) GetLeaderboard(ctx context.Context) ([]*LeaderboardEntry, error) {
 	query := `SELECT user_id, COALESCE(SUM(tokens), 0) AS total_tokens, COUNT(*) AS total_traces
 		FROM interaction_logs

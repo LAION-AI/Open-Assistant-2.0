@@ -363,6 +363,49 @@ func main() {
 		w.Write([]byte(`{"success":true}`))
 	})
 
+	// Where a user's contributions stand relative to the publication embargo.
+	// The Bun layer authenticates the session and supplies the trusted userId.
+	mux.HandleFunc("/api/logs/embargo", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		userID := r.URL.Query().Get("userId")
+		if userID == "" {
+			http.Error(w, `{"error":"userId required"}`, http.StatusBadRequest)
+			return
+		}
+
+		now := time.Now()
+		st, err := repo.EmbargoStatusByUser(r.Context(), userID, now.Add(-PublicationEmbargo).Unix())
+		if err != nil {
+			log.Printf("Error reading embargo status: %v", err)
+			http.Error(w, fmt.Sprintf(`{"error":"database error: %v"}`, err), http.StatusInternalServerError)
+			return
+		}
+
+		// nextEligibleAt is when the *oldest* pending row graduates, i.e. the next
+		// deadline that matters to this contributor.
+		var nextEligibleAt int64
+		if st.OldestPendingAt > 0 {
+			nextEligibleAt = time.Unix(st.OldestPendingAt, 0).Add(PublicationEmbargo).Unix()
+		}
+
+		jsonBytes, err := json.Marshal(map[string]interface{}{
+			"pending":        st.Pending,
+			"publishable":    st.Publishable,
+			"nextEligibleAt": nextEligibleAt,
+			"embargoDays":    int(PublicationEmbargo.Hours() / 24),
+		})
+		if err != nil {
+			http.Error(w, `{"error":"marshal failed"}`, http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write(jsonBytes)
+	})
+
 	// Leaderboard: per-user token totals and trace counts
 	mux.HandleFunc("/api/leaderboard", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")

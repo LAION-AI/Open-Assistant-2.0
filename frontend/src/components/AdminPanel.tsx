@@ -46,6 +46,11 @@ export function AdminPanel() {
   const [activeSubTab, setActiveSubTab] = useState<"users" | "logs" | "feedback">("users");
   const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
+  // Deleting someone else's account is irreversible and one click from a list of
+  // rows, so it goes through the same typed confirmation as self-deletion.
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const [expandedLogId, setExpandedLogId] = useState<number | null>(null);
   const [expandedThinkingKeys, setExpandedThinkingKeys] = useState<Set<string>>(new Set());
   const [showRawJsonIds, setShowRawJsonIds] = useState<Set<number>>(new Set());
@@ -56,6 +61,28 @@ export function AdminPanel() {
   const [logPage, setLogPage] = useState(0);
   const [logsTotal, setLogsTotal] = useState(0);
   const [logsLoading, setLogsLoading] = useState(false);
+
+  const deleteUser = async (u: { id: string; username: string }) => {
+    setDeleteBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/users/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: u.id, confirm: deleteConfirm }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Deletion failed");
+      setDeleteTarget(null);
+      setDeleteConfirm("");
+      await fetchUsers();
+      await fetchLogs();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
 
   const fetchUsers = async () => {
     const res = await fetch("/api/admin/users");
@@ -426,6 +453,7 @@ export function AdminPanel() {
                       <th className="px-6 py-3.5">BYOE Status</th>
                       <th className="px-6 py-3.5">Admin</th>
                       <th className="px-6 py-3.5 text-right">Registered At</th>
+                      <th className="px-6 py-3.5 text-right">Delete</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/30 text-xs">
@@ -459,6 +487,47 @@ export function AdminPanel() {
                         </td>
                         <td className="px-6 py-4 text-right text-muted-foreground">
                           {u.createdAt ? formatTime(u.createdAt) : "N/A"}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          {deleteTarget === u.id ? (
+                            <div className="flex items-center justify-end gap-1.5">
+                              <input
+                                value={deleteConfirm}
+                                onChange={e => setDeleteConfirm(e.target.value)}
+                                placeholder={u.username}
+                                autoComplete="off"
+                                className="h-7 w-28 px-2 rounded-lg bg-background/60 border border-destructive/30 text-[11px]"
+                              />
+                              <button
+                                onClick={() => deleteUser(u)}
+                                disabled={deleteBusy || deleteConfirm !== u.username}
+                                className="h-7 px-2 rounded-lg bg-destructive text-white text-[10px] font-semibold disabled:opacity-40"
+                              >
+                                {deleteBusy ? "…" : "Confirm"}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setDeleteTarget(null);
+                                  setDeleteConfirm("");
+                                }}
+                                className="h-7 px-2 rounded-lg text-[10px] text-muted-foreground hover:text-foreground"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setDeleteTarget(u.id);
+                                setDeleteConfirm("");
+                                setError(null);
+                              }}
+                              title={`Delete ${u.username} and every contribution they made`}
+                              className="h-7 px-2 rounded-lg border border-destructive/30 text-destructive text-[10px] font-semibold hover:bg-destructive/10"
+                            >
+                              Delete
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}

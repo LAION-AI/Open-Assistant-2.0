@@ -1758,6 +1758,30 @@ const server = serve({
       }
     },
 
+    // Where this user's contributions stand relative to the 30-day publication
+    // window. Drives the countdown in the header: the window is only a real
+    // safeguard if people can see it running.
+    "/api/user/publication-status": async req => {
+      try {
+        const cookies = parseCookies(req.headers.get("cookie"));
+        const sessionToken = cookies["session"];
+        if (!sessionToken) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const payload = await verifySessionToken(sessionToken);
+        if (!payload) return Response.json({ error: "Invalid session" }, { status: 401 });
+
+        const res = await fetch(
+          `${BACKEND_URL}/api/logs/embargo?userId=${encodeURIComponent(payload.userId)}`
+        );
+        if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+        return Response.json(await res.json());
+      } catch (err: any) {
+        console.error("Error reading publication status:", err);
+        // Non-fatal: the countdown is informational, so the UI just hides it
+        // rather than showing an alarming error for a chip.
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
     // Grant or withdraw dataset-release consent. Withdrawal must be as easy as
     // giving it (GDPR Art. 7(3)), so this is the same one-click call either way.
     "/api/user/consent": async req => {
@@ -2012,6 +2036,79 @@ const server = serve({
         });
       } catch (err: any) {
         console.error("Error exporting dataset:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Admin: delete another account, with the same completeness as a user
+    // deleting their own — interaction data first, then the account rows.
+    "/api/admin/users/delete": async req => {
+      try {
+        if (req.method !== "POST") {
+          return Response.json({ error: "Method not allowed" }, { status: 405 });
+        }
+        const cookies = parseCookies(req.headers.get("cookie"));
+        const sessionToken = cookies["session"];
+        if (!sessionToken) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const payload = await verifySessionToken(sessionToken);
+        if (!payload) return Response.json({ error: "Invalid session" }, { status: 401 });
+
+        const admin = await dbAdapter.getUser(payload.userId);
+        if (!admin || admin.isAdmin !== 1) {
+          return Response.json({ error: "Forbidden" }, { status: 403 });
+        }
+
+        const { userId, confirm } = await req.json();
+        const target = userId ? await dbAdapter.getUser(userId) : null;
+        if (!target) return Response.json({ error: "User not found" }, { status: 404 });
+
+        // Typing the target's username is the guard against deleting the wrong
+        // row from a list — the one mistake this endpoint makes easy.
+        if (confirm !== target.username) {
+          return Response.json(
+            { error: `Type "${target.username}" to confirm deleting that account` },
+            { status: 400 }
+          );
+        }
+        // Self-deletion goes through Settings → Danger Zone, which also ends the
+        // session properly. Doing it here would leave a live cookie for a gone user.
+        if (target.id === admin.id) {
+          return Response.json(
+            { error: "To delete your own account, use Settings → Danger Zone." },
+            { status: 400 }
+          );
+        }
+        // Refuse to remove the last administrator: an instance nobody can
+        // administer cannot be recovered from the UI.
+        if (target.isAdmin === 1) {
+          const admins = (await db.select().from(users).all()).filter(u => u.isAdmin === 1);
+          if (admins.length <= 1) {
+            return Response.json(
+              { error: "That is the only administrator account — promote someone else first." },
+              { status: 400 }
+            );
+          }
+        }
+
+        const res = await fetch(`${BACKEND_URL}/api/logs/delete`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: target.id, all: true }),
+        });
+        if (!res.ok) {
+          // Erase the data or nothing: an account row removed while its logs
+          // survive would orphan data nobody can reach or delete.
+          throw new Error(`Backend refused to delete interaction data (${res.status})`);
+        }
+        const { deleted = 0 } = await res.json().catch(() => ({ deleted: 0 }));
+
+        await dbAdapter.deleteUser(target.id);
+        console.log(
+          `Admin ${admin.username} deleted account ${target.username} (${target.id}) and ${deleted} interaction row(s)`
+        );
+        return Response.json({ success: true, deleted, username: target.username });
+      } catch (err: any) {
+        console.error("Error deleting user as admin:", err);
         return Response.json({ error: err.message }, { status: 500 });
       }
     },

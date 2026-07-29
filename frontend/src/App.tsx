@@ -12,6 +12,7 @@ import { OnboardingFlow } from "./components/OnboardingFlow";
 import { SecurityBanner } from "./components/SecurityBanner";
 import { LegalPage, LegalFooter } from "./components/LegalPage";
 import { TermsUpdateBanner } from "./components/TermsUpdateBanner";
+import { PublicationCountdown } from "./components/PublicationCountdown";
 import { ConsentCheckboxes, EMPTY_CONSENT, type ConsentState } from "./components/ConsentCheckboxes";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -87,6 +88,9 @@ export function App() {
   // Exception: a password-reset link lands on /?reset=<token>, which is a
   // password flow by definition. Mount email straight away in that case, or the
   // link would open a passkey screen with no way through.
+  // Bumped after an upload or a deletion so the publication countdown re-reads
+  // instead of showing a figure that is one action out of date.
+  const [contributionsChanged, setContributionsChanged] = useState(0);
   const [emailPath, setEmailPath] = useState<"none" | "login" | "register">(() =>
     typeof window !== "undefined" && new URLSearchParams(window.location.search).has("reset")
       ? "login"
@@ -404,6 +408,11 @@ export function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            <PublicationCountdown
+              refreshKey={contributionsChanged}
+              onNavigate={handleNavigate}
+            />
+
             <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-muted border border-border/50 text-xs font-semibold text-muted-foreground">
               <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
               <span>{user.username}</span>
@@ -500,7 +509,10 @@ export function App() {
              {activeTab === "home" ? (
               <HomePanel onNavigate={handleNavigate} />
             ) : activeTab === "uploads" ? (
-              <UploadsPanel uploadBlocked={!user.hasPasskey && !user.twoFactorEnabled} />
+              <UploadsPanel
+                uploadBlocked={!user.hasPasskey && !user.twoFactorEnabled}
+                onContributionsChanged={() => setContributionsChanged(n => n + 1)}
+              />
             ) : activeTab === "settings" ? (
               <SettingsPanel user={user} onUpdateUser={(u) => setUser(u)} subTab={settingsSubTab} onSubTabChange={setSettingsSubTab} />
             ) : (

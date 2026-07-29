@@ -43,7 +43,14 @@ function formatTime(ts: number) {
   return new Date(ts > 9999999999 ? ts : ts * 1000).toLocaleString();
 }
 
-export function UploadsPanel({ uploadBlocked }: { uploadBlocked?: boolean }) {
+export function UploadsPanel({
+  uploadBlocked,
+  onContributionsChanged,
+}: {
+  uploadBlocked?: boolean;
+  /** Called whenever the set of contributions changes, so the header countdown re-reads. */
+  onContributionsChanged?: () => void;
+}) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +66,9 @@ export function UploadsPanel({ uploadBlocked }: { uploadBlocked?: boolean }) {
       if (!res.ok) throw new Error(`Failed to load uploads: ${res.statusText}`);
       const data = await res.json();
       setConversations(groupConversations((data.logs || []) as InteractionLog[]));
+      // Every refetch here follows an upload, a deletion or an explicit reload —
+      // exactly the moments the countdown's numbers change.
+      onContributionsChanged?.();
     } catch (err: any) {
       setError(err.message || "Failed to load uploads");
     } finally {
