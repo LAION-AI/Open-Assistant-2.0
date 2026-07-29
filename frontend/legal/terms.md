@@ -35,9 +35,10 @@ You agree not to:
 
 - submit content that is unlawful under German or applicable law, including
   content that infringes copyright or other third-party rights;
-- **submit personal data about other people** — do not paste other people's
-  names, contact details, health information or similar into prompts or
-  uploaded traces. Section 4 sets out what you must check before every upload;
+- **knowingly submit personal data about other people** — do not paste other
+  people's names, contact details, health information or similar into prompts or
+  uploaded traces. Section 4.2 covers what to do about the ones that slip
+  through, which is a different matter from doing it deliberately;
 - upload traces whose sharing is restricted by the terms of the tool or provider
   they came from (section 4.1);
 - submit credentials, API keys, access tokens or other secrets;
@@ -50,25 +51,26 @@ You agree not to:
 
 We may suspend or delete accounts that break these rules, and remove content
 that does. Where the breach is minor and fixable we will normally say so first.
-Breaches of section 4 are treated differently — see section 4.4.
+Section 4 sets out what we ask you to check before uploading, and what follows
+if something slips through — the answer differs sharply between § 4.1 and § 4.2.
 
-## 4. What you are responsible for checking before you upload
+## 4. What you check before you upload, and what we check after
 
-This section matters more than any other, so it is stated bluntly.
+Two different things are covered here, and they carry deliberately different
+consequences.
 
-You decide what leaves your machine. We receive whatever you send, at the volume
-you send it, and we cannot read your uploads to work out where each one came
-from or what rules applied to it. **You are the only person who can check that,
-and by accepting these terms you undertake to actually do it — for every upload,
-every time.**
+Whether you are **allowed** to share a trace at all is something only you can
+establish, and getting it wrong is serious (§ 4.1). Whether the content still
+contains **personal data** is something we help with and check again ourselves,
+and a miss there is a thing to fix, not a thing to punish (§ 4.2).
 
-### 4.1 Third-party terms
+### 4.1 Third-party terms — yours to check, and we cannot do it for you
 
 Traces you import come from someone else's product — Claude Code, GitHub
 Copilot, opencode, Codex CLI, Antigravity, your employer's internal tools, an
 inference provider you pay for. Each of those has its own terms of service, and
-some of them restrict what you may do with the outputs, the logs, or the tool's
-own prompts.
+some restrict what you may do with the outputs, the logs, or the tool's own
+prompts.
 
 **You warrant that, before uploading, you have checked the current terms of
 every third-party service a trace came from, and that sharing that trace with us
@@ -79,39 +81,57 @@ We do not and cannot perform this check for you. We are not a party to your
 agreement with those providers, we have no visibility into which plan or licence
 you hold, and reviewing every trace against every provider's current terms is
 not something we are able to do at any scale. If you are not sure a trace may be
-shared, do not upload it.
+shared, do not upload it. This is the one obligation here whose breach can cost
+you your account — see § 4.4.
 
-### 4.2 Personal data in what you upload
+### 4.2 Personal data — please double-check; we check again too
 
-**You warrant that you have reviewed each upload for personal data — your own
-and, above all, other people's — and removed what you found before uploading.**
+Before uploading, please review the conversations for personal data — yours and
+other people's — and remove what you find. Four eyes see more than two, and
+yours are the only ones that know the context.
 
-If you discover personal data in something you have already uploaded, you must
-delete it immediately: individual conversations in "My Uploads", or everything
-at once in Settings. Both take one click and need no request to us.
+We do not rely on that alone. There are two further stages:
+
+- the optional on-device redaction tool, which runs in your browser before
+  anything is sent to us (§ 4.3);
+- **a further automated redaction and filtering pass that we run over the corpus
+  before any public release.** Something you miss is therefore not automatically
+  something that gets published.
+
+None of these three stages is perfect, which is exactly why there are three of
+them. Missing something is not treated as a breach of these terms and has no
+consequence for your account. If you notice personal data in something you have
+already uploaded, delete it — individual conversations in "My Uploads", or
+everything at once in Settings, both one click and no request to us.
 
 ### 4.3 On-device redaction is an offer, not a guarantee
 
-We provide a local PII redaction tool because it is genuinely useful. It runs a
+We provide the local PII redaction tool because it is genuinely useful. It runs a
 statistical model in your browser. **It is offered as an aid and comes with no
 warranty of any kind: it will miss personal data, and a redacted upload is not a
-clean upload.** The same is true of the filtering we run before any dataset
-release — it reduces risk, it does not eliminate it.
+clean upload.** The same is true of our pre-release pass. Use the tool, and still
+look at the result yourself.
 
-Running the redaction tool therefore does not discharge your obligation under
-section 4.2. Review the result yourself.
+### 4.4 If something goes wrong
 
-### 4.4 Consequences
+**Breach of § 4.1 (third-party terms).** We will normally contact you first and
+remove the material. Uploading material you were not permitted to share — and in
+particular continuing to do so after we have raised it — leads to **permanent
+deletion of your account and all of your contributions.**
 
-Uploading material in breach of this section may lead to **immediate and
-permanent deletion of your account and all of your contributions**, without
-notice and without the "we will normally say so first" courtesy in section 3.
-Where a breach exposes us or a third party to a claim, you are responsible for
-your own conduct to the extent the law provides.
+**Personal data that slipped through.** No account consequence. We remove the
+material, from the working corpus and from later releases, and you can remove it
+yourself at any time.
 
-If you believe someone's personal data, or material shared in breach of a
-third party's terms, is present in the Service or in a published release, tell
-us at [contact@laion.ai](mailto:contact@laion.ai) and we will act on it.
+**After a release has gone out.** Every instance in a release carries a stable
+instance identifier. If you — or anyone — reports personal data in a published
+release, quoting that identifier, we will tag the instance, remove it from the
+copies we distribute and exclude it from every later revision of the dataset.
+What we cannot do is reach into copies that other people have already downloaded
+(§ 6.4 and § 5.3 of the [Privacy Policy](/privacy)).
+
+Report anything of this kind to
+[contact@laion.ai](mailto:contact@laion.ai).
 
 ## 5. Your endpoints and third-party services
 
@@ -185,8 +205,8 @@ excluded. Your statutory rights as a consumer are unaffected.
 You may stop using the Service at any time. Settings → Danger Zone lets you
 delete all of your interaction data, or your entire account, yourself — no
 request and no waiting. We may terminate accounts that breach
-section 3, and will terminate accounts that breach section 4, or discontinue the
-Service entirely.
+section 3, and will terminate accounts that breach section 4.1, or discontinue
+the Service entirely.
 
 Deleting your account erases your account record, credentials, consent records
 and stored interaction data, immediately and irreversibly. It does not recall

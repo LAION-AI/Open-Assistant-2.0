@@ -97,10 +97,14 @@ Two points of honesty about this feature:
   third party and will expose your IP address to them. Your *text* is never
   sent there.
 - Automatic redaction is a statistical model, **not a guarantee**. It is offered
-  as an aid and will miss things. Review the result yourself before you upload —
-  the [Terms](/terms) §4 make checking each upload your responsibility, and
-  running the tool does not replace that. We filter again before any public
-  release, but neither step is perfect.
+  as an aid and will miss things. Look at the result yourself before uploading —
+  the [Terms](/terms) § 4.2 ask you to, on the plain reasoning that four eyes see
+  more than two.
+
+Redaction on your device is the first of three stages, not the only one: we run a
+further automated redaction and filtering pass over the corpus before any public
+release (§ 5.2), and anything reported afterwards is removed (§ 5.3). None of the
+three is perfect, which is why there are three.
 
 If you find personal data in something you have already uploaded, delete it
 straight away ("My Uploads", or Settings for everything at once). If you find
@@ -122,22 +126,33 @@ academic research, including a planned dataset and benchmark publication.
 
 ### 5.2 What we do before publishing
 
-Released data is filtered before release: automated PII detection, removal of
-account identifiers (releases use pseudonymous participant identifiers, not
-your username or email), and exclusion of any interaction whose contributor has
-not consented. **We do not publish raw, unfiltered conversation logs.**
+Released data is filtered before release: **a further automated PII detection and
+redaction pass over the whole corpus** — independent of whatever redaction you ran
+on your own device — removal of account identifiers (releases use pseudonymous
+participant identifiers, not your username or email), and exclusion of any
+interaction whose contributor has not consented. Each released instance carries a
+stable identifier so it can be reported and pulled later (§ 5.3). **We do not
+publish raw, unfiltered conversation logs.**
 
-### 5.3 Withdrawal, and its limits
+### 5.3 Withdrawal, correction after release, and the honest limit
 
 You can withdraw dataset consent at any time in Settings. From that moment your
-data is excluded from all future releases, and you can delete individual
-uploads yourself under "My Uploads".
+data is excluded from all future releases, and you can delete individual uploads
+yourself under "My Uploads".
 
-**A dataset release that has already been published cannot be recalled.** Once
-a corpus is public under CC-BY 4.0, copies exist beyond our control. We will
-remove your data from the working corpus and from subsequent releases, but we
-cannot retract copies other people already hold. Please take this into account
-before you consent — it is the reason consent is asked separately rather than
+**Reporting something in a release that has already gone out.** Every instance we
+publish carries a stable instance identifier. If personal data is found in a
+published release, tell us and quote that identifier: we tag the instance, pull it
+from the copies we distribute, and exclude it from every later revision of the
+dataset. The same applies to a whole contributor's data on withdrawal. This is a
+route that stays open indefinitely, not only before the first release — write to
+[contact@laion.ai](mailto:contact@laion.ai).
+
+**The limit, stated plainly: a release that is already public cannot be
+recalled.** Once a corpus is out under CC-BY 4.0, other people hold copies, and
+nothing we do reaches those. We can stop distributing an instance and keep it out
+of everything that follows; we cannot make a downloaded copy disappear. Please
+weigh that before you consent — it is why consent is asked separately rather than
 bundled into the terms.
 
 ### 5.4 Recipients and international transfers

@@ -75,6 +75,25 @@ func TestExportNeverCarriesAccountIdentifiers(t *testing.T) {
 	}
 }
 
+func TestInstanceIDIdentifiesExactlyOneRow(t *testing.T) {
+	// The post-release withdrawal route depends on this: a reporter quotes the
+	// instance id, and it has to resolve to one row and keep resolving to it.
+	if instanceRef(42) != instanceRef(42) {
+		t.Error("instance id is not stable for the same row")
+	}
+	if instanceRef(42) == instanceRef(43) {
+		t.Error("two rows collided onto the same instance id")
+	}
+	rows := buildExport([]*db.LogEntry{{ID: 7, UserID: "u1", ConversationID: "c1"}},
+		map[string]bool{"u1": true}, "1.0")
+	if rows[0].InstanceID != instanceRef(7) {
+		t.Fatalf("exported instance id %q does not match the row it came from", rows[0].InstanceID)
+	}
+	if strings.Contains(rows[0].InstanceID, "7") && len(rows[0].InstanceID) < 8 {
+		t.Error("instance id looks like a bare row id rather than a pseudonym")
+	}
+}
+
 func TestParticipantIDIsStableAndDistinct(t *testing.T) {
 	// Stable, so a contributor's rows stay linkable within and across releases.
 	if participantID("u1") != participantID("u1") {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"backend/db"
@@ -65,6 +66,15 @@ func conversationRef(conversationID string) string {
 	return pseudonym("oa2-conversation:", conversationID)
 }
 
+// instanceRef is the identifier a release carries per instance. It exists so a
+// specific published row can be reported and withdrawn after the fact (terms
+// § 4.4, privacy § 5.3): a reporter quotes this, and it maps back to exactly one
+// row here. Derived from the row id, so it is stable across releases as long as
+// the row lives — and the row not living is itself the removal.
+func instanceRef(id int64) string {
+	return pseudonym("oa2-instance:", strconv.FormatInt(id, 10))
+}
+
 func pseudonym(domain, value string) string {
 	sum := sha256.Sum256([]byte(domain + value))
 	return hex.EncodeToString(sum[:])[:16]
@@ -74,6 +84,8 @@ func pseudonym(domain, value string) string {
 // carries UserID, and a struct that *can* serialise an account id is a struct
 // that eventually will.
 type ExportRow struct {
+	// Quote this when reporting an instance for withdrawal — see instanceRef.
+	InstanceID    string `json:"instanceId"`
 	ParticipantID string `json:"participantId"`
 	// Pseudonymous, like ParticipantID — see conversationRef.
 	ConversationID string          `json:"conversationId"`
@@ -98,6 +110,7 @@ func buildExport(logs []*db.LogEntry, consented map[string]bool, consentVersion 
 			continue
 		}
 		out = append(out, ExportRow{
+			InstanceID:     instanceRef(l.ID),
 			ParticipantID:  participantID(l.UserID),
 			ConversationID: conversationRef(l.ConversationID),
 			Platform:       l.Platform,

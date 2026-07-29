@@ -28,12 +28,19 @@ version each user accepted is recorded against the constants in
 
 Reviewed by counsel at version 1.0.
 
-**Changed since that review:** terms and privacy version 1.1 add § 4 of the
-terms (uploader warranties on third-party terms of service and on PII, the
-no-warranty statement for on-device redaction, and account termination as the
-consequence) and the matching paragraph in privacy § 4. Have counsel confirm
-that wording — in particular that § 4.4 and the liability clause in § 9 sit
-correctly against § 307 and § 309 BGB for consumers.
+**Changed since that review:** version 1.1 adds terms § 4 and the matching
+paragraphs in privacy § 4 and § 5.2–5.3. Two things there are worth counsel's
+specific attention:
+
+- § 4.1 is a **warranty** (third-party terms of service) whose breach costs the
+  account, while § 4.2 is a **request** (personal data) with no account
+  consequence. That asymmetry is deliberate — it should survive editing.
+- § 4.4 and the liability clause in § 9 are the clauses most exposed to § 307 /
+  § 309 BGB for consumers.
+
+Privacy § 5.3 also now promises post-release withdrawal by instance identifier.
+That is a commitment with an operational tail: releases must keep carrying
+`instanceId` (see `backend/export.go`) for it to be keepable.
 
 Keep the rule: a material edit to any of these documents — anything that changes
 what we may do with contributors' data, or what we require of them — needs review

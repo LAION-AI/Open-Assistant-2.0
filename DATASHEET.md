@@ -116,6 +116,9 @@ Before any public release:
   export query itself, which joins against the consent record and drops anyone
   whose consent is absent, withdrawn, or attached to a superseded version of the
   consent document. There is no code path that exports unfiltered rows;
+- each instance carries a stable pseudonymous **instance identifier**, so a
+  specific published row can be reported and withdrawn after release (see
+  Maintenance);
 - account identifiers are replaced with pseudonymous participant identifiers
   (domain-separated SHA-256, stable per contributor so their instances stay
   linkable — note this is a hash of the account id, not a keyed MAC, so it
@@ -190,8 +193,16 @@ Yes; collection is continuous and further releases are expected. Each release
 is versioned, and this datasheet is updated with it.
 
 **How are erasure requests handled?**
-Withdrawal of consent and deletion — both self-service — remove the data from
-the working corpus and from all subsequent releases. Already-published releases cannot be
+Withdrawal of consent and deletion — both self-service — remove the data from the
+working corpus and from all subsequent releases.
+
+For data already published, reports are handled by instance identifier: the
+instance is tagged, pulled from the copies we distribute, and excluded from every
+later revision. Reports go to [contact@laion.ai](mailto:contact@laion.ai) and the
+route stays open for the life of the dataset. Copies already downloaded by third
+parties are outside our reach, and the consent text says so before anyone
+consents — downstream users of a release should re-pull rather than treat any
+snapshot as final. Already-published releases cannot be
 recalled — contributors are told this before consenting, and it is stated in
 [the Privacy Policy](frontend/legal/privacy.md) §5.3.
 

@@ -216,9 +216,10 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
   const [redactState, setRedactState] = useState<"idle" | "loading" | "running" | "done">("idle");
   const [redactStatus, setRedactStatus] = useState("");
   const [autoRedact, setAutoRedact] = useState(true);
-  // Terms § 4 puts the checks on the uploader. Asking here, at the moment of
-  // upload, is the only place the acknowledgement means anything — and it has to
-  // be re-ticked for each batch rather than remembered from a past session.
+  // Terms § 4.1 is a warranty, and this is the only place it means anything:
+  // per batch, next to the conversations it applies to. It covers the
+  // third-party-terms check only — missing PII is handled by § 4.2, which asks
+  // rather than warrants, and carries no account consequence.
   const [acknowledged, setAcknowledged] = useState(false);
 
   const folderRef = useRef<HTMLInputElement>(null);
@@ -599,15 +600,17 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
                 className="mt-0.5"
               />
               <span className="text-[11px] leading-relaxed text-muted-foreground">
-                I have checked these conversations myself: sharing them is permitted by the
-                terms of the tools and providers they came from, and I have reviewed them for
-                personal data — mine and other people's — and removed what I found. I
-                understand the redaction tool is an aid, not a guarantee, and that uploading
-                in breach of{" "}
-                <a href="/terms" target="_blank" className="text-indigo-400 hover:underline">
-                  § 4 of the Terms
-                </a>{" "}
-                can lead to permanent deletion of my account.
+                I have checked that sharing these conversations is permitted by the terms of
+                the tools and providers they came from, and I understand that uploading
+                material I was not allowed to share can cost me my account
+                (<a href="/terms" target="_blank" className="text-indigo-400 hover:underline">
+                  Terms § 4.1
+                </a>).
+                <span className="block mt-1 text-muted-foreground/70">
+                  I have also had a look for personal data and removed what I found. Four eyes
+                  see more than two — we run another redaction pass before any release, and
+                  anything missed can still be reported and pulled afterwards.
+                </span>
               </span>
             </label>
 
