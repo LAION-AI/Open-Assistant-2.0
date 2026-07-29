@@ -27,7 +27,11 @@ import {
   ExternalLink,
   Settings2,
   Sprout,
+  Sparkles,
 } from "lucide-react";
+
+const BONSAI_WEBGPU_URL = "https://huggingface.co/spaces/webml-community/bonsai-webgpu-kernels";
+const GEMMA_WEBGPU_URL = "https://huggingface.co/spaces/webml-community/gemma-4-webgpu-kernels";
 
 interface Message {
   id: string;
@@ -538,41 +542,45 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
                   </div>
                   <div className="min-w-0">
                     <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-400">
-                      Local-first chat
+                      On-device WebGPU
                     </p>
                     <h3 className="text-lg font-bold text-foreground sm:text-xl">
-                      Bring a model, keep the conversation flowing
+                      Choose a model that runs in your browser
                     </h3>
                   </div>
                 </div>
                 <p className="text-sm leading-relaxed text-muted-foreground">
-                  Connect any OpenAI V1-compatible endpoint. Don&apos;t have one yet? Bonsai 27B 1-bit is an open,
-                  efficient model you can run locally, then connect here.
+                  Launch a browser-native runner in an isolated tab or connect an OpenAI V1-compatible endpoint.
+                  WebGPU runners cache their weights locally, and inference stays on your device.
                 </p>
                 <div className="mt-5 grid gap-2.5 sm:grid-cols-2">
                   <a
-                    href="https://github.com/PrismML-Eng/Bonsai-demo"
+                    href={BONSAI_WEBGPU_URL}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex h-11 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-emerald-600 px-3 text-xs font-semibold text-white shadow-lg shadow-emerald-600/15 transition hover:bg-emerald-500 sm:gap-2 sm:px-4 sm:text-sm"
+                    className="group flex min-h-16 items-center gap-3 rounded-xl bg-emerald-600 px-4 py-3 text-left text-white shadow-lg shadow-emerald-600/15 transition hover:bg-emerald-500"
                   >
-                    <Sprout className="h-4 w-4" />
-                    <span>Start with Bonsai 27B 1-bit</span>
-                    <ExternalLink className="h-3.5 w-3.5 opacity-70" />
+                    <Sprout className="h-5 w-5 flex-shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold">Bonsai 27B 1-bit</span>
+                      <span className="block text-[10px] font-medium text-white/75">3.80 GB · browser WebGPU</span>
+                    </span>
+                    <ExternalLink className="h-3.5 w-3.5 flex-shrink-0 opacity-70 transition group-hover:opacity-100" />
                   </a>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => onNavigate("settings-byoe")}
-                    className="h-11 rounded-xl gap-2 text-sm font-semibold"
+                  <a
+                    href={GEMMA_WEBGPU_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="group flex min-h-16 items-center gap-3 rounded-xl bg-indigo-600 px-4 py-3 text-left text-white shadow-lg shadow-indigo-600/15 transition hover:bg-indigo-500"
                   >
-                    <Settings2 className="h-4 w-4" />
-                    <span>Configure a V1 endpoint</span>
-                  </Button>
+                    <Sparkles className="h-5 w-5 flex-shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-semibold">Gemma 4 E2B</span>
+                      <span className="block text-[10px] font-medium text-white/75">2.46 GB · browser WebGPU</span>
+                    </span>
+                    <ExternalLink className="h-3.5 w-3.5 flex-shrink-0 opacity-70 transition group-hover:opacity-100" />
+                  </a>
                 </div>
-                <p className="mt-4 text-[11px] leading-relaxed text-muted-foreground/75">
-                  Bonsai runs on your own Mac, Linux, or Windows machine. Once its server is running, add its V1 URL in Settings.
-                </p>
               </div>
             </div>
           ) : messages.length === 0 ? (
@@ -764,14 +772,37 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
           </form>
         ) : (
           <div className="border-t border-border/70 bg-card/50 px-3 py-3 sm:px-6 sm:py-4">
-            <Button
-              type="button"
-              onClick={() => onNavigate("settings-byoe")}
-              className="h-11 w-full rounded-xl bg-indigo-600 text-sm font-semibold text-white hover:bg-indigo-700"
-            >
-              <Settings2 className="mr-2 h-4 w-4" />
-              Configure a V1 endpoint to chat
-            </Button>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <a
+                href={BONSAI_WEBGPU_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 text-xs font-semibold text-white transition hover:bg-emerald-500"
+              >
+                <Sprout className="h-4 w-4" />
+                Run Bonsai in browser
+                <ExternalLink className="h-3.5 w-3.5 opacity-70" />
+              </a>
+              <a
+                href={GEMMA_WEBGPU_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 text-xs font-semibold text-white transition hover:bg-indigo-500"
+              >
+                <Sparkles className="h-4 w-4" />
+                Run Gemma 4 in browser
+                <ExternalLink className="h-3.5 w-3.5 opacity-70" />
+              </a>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onNavigate("settings-byoe")}
+                className="h-10 rounded-xl text-xs font-semibold sm:col-span-2"
+              >
+                <Settings2 className="mr-2 h-4 w-4" />
+                Configure a V1 endpoint instead
+              </Button>
+            </div>
           </div>
         )}
       </div>
