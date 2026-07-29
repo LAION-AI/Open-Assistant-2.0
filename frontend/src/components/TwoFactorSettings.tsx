@@ -141,7 +141,7 @@ export function TwoFactorSettings({ user, onUpdated, emailAvailable }: Props) {
             the biometric or PIN that unlocks it — and it can't be phished. There's nothing to add here.
           </CardDescription>
         </CardHeader>
-        <CardContent className="p-6">
+        <CardContent className="p-4 sm:p-6">
           <div className="flex items-start gap-2.5 text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3">
             <ShieldCheck className="w-4 h-4 flex-shrink-0 mt-0.5" />
             <span>Passkey protection is active. If you later add a password, set up 2FA to match it.</span>
@@ -178,7 +178,7 @@ export function TwoFactorSettings({ user, onUpdated, emailAvailable }: Props) {
         </CardDescription>
       </CardHeader>
 
-      <CardContent className="p-6 space-y-4">
+      <CardContent className="p-4 sm:p-6 space-y-4">
         {error && (
           <div className="p-2.5 bg-destructive/10 border border-destructive/20 text-destructive text-[11px] rounded-xl flex items-start gap-2">
             <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
@@ -207,7 +207,7 @@ export function TwoFactorSettings({ user, onUpdated, emailAvailable }: Props) {
                 <span key={c} className="tracking-wider">{c}</span>
               ))}
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button onClick={copyCodes} variant="outline" className="h-9 rounded-lg text-xs gap-2">
                 {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                 {copied ? "Copied" : "Copy codes"}
@@ -253,7 +253,7 @@ export function TwoFactorSettings({ user, onUpdated, emailAvailable }: Props) {
                 className="h-11 rounded-xl font-mono tracking-[0.4em] text-center text-lg"
               />
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button onClick={confirmTotp} disabled={loading || code.length !== 6} className="h-10 rounded-lg text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-2">
                 {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Verify & enable
               </Button>
@@ -274,7 +274,7 @@ export function TwoFactorSettings({ user, onUpdated, emailAvailable }: Props) {
               autoComplete="one-time-code"
               className="h-11 rounded-xl font-mono tracking-[0.4em] text-center text-lg"
             />
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button onClick={confirmEmail} disabled={loading || code.length !== 6} className="h-10 rounded-lg text-xs bg-emerald-600 hover:bg-emerald-700 text-white gap-2">
                 {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Verify & enable
               </Button>
@@ -300,7 +300,7 @@ export function TwoFactorSettings({ user, onUpdated, emailAvailable }: Props) {
               autoComplete="current-password"
               className="h-11 rounded-xl"
             />
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button
                 onClick={step === "disable" ? doDisable : doRegen}
                 disabled={loading || !password}

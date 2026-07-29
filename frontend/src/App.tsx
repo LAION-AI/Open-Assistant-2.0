@@ -226,7 +226,7 @@ export function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
+      <div className="min-h-[100dvh] w-full flex items-center justify-center bg-background text-foreground">
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 rounded-full border-2 border-indigo-600 border-t-transparent animate-spin"></div>
           <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -240,7 +240,7 @@ export function App() {
   // Not authenticated view (Sign in / Register)
   if (!user) {
     return (
-      <div className="min-h-screen w-full flex items-center justify-center px-4 relative z-10 py-12">
+      <div className="min-h-[100dvh] w-full min-w-0 flex items-center justify-center overflow-x-hidden px-3 sm:px-4 relative z-10 py-6 sm:py-12">
         <Card className="w-full max-w-md bg-card/40 backdrop-blur-md border border-border/80 shadow-2xl rounded-2xl overflow-hidden">
           <CardHeader className="text-center pb-4 pt-8 border-b border-border/50 bg-card/30">
             <img src={logo} alt="Open Assistant Logo" className="h-16 w-auto mx-auto mb-4 hover:scale-105 transition-all duration-300" />
@@ -392,22 +392,30 @@ export function App() {
     );
   }
 
+  const navItems = [
+    { tab: "home" as const, label: "Home", icon: Home },
+    { tab: "chat" as const, label: "Chat", icon: MessageSquare },
+    { tab: "uploads" as const, label: "Uploads", icon: Boxes },
+    { tab: "settings" as const, label: "Settings", icon: Settings },
+    ...(user.isAdmin === 1
+      ? [{ tab: "admin" as const, label: "Admin", icon: Shield }]
+      : []),
+  ];
+
   // Authenticated Dashboard view
   return (
-    // Pinned to the viewport (not `w-full`) so the body's content-sized grid
-    // column can't make the layout widen as streamed text grows.
-    <div className="fixed inset-0 flex flex-col z-10 overflow-hidden">
+    <div className="fixed inset-0 h-[100dvh] w-full max-w-full min-w-0 flex flex-col z-10 overflow-hidden overscroll-none">
       {/* Header bar */}
       <header className="w-full border-b border-border/80 bg-background/30 backdrop-blur-md z-50 flex-shrink-0">
-        <div className="w-full px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        <div className="w-full min-w-0 px-3 sm:px-4 h-14 md:h-16 flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
             <img src={logo} alt="Open Assistant Logo" className="h-8 w-auto" />
             <span className="font-extrabold text-base tracking-tight hidden sm:block">
               Open Assistant 2.0
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex min-w-0 items-center gap-2 md:gap-3">
             <PublicationCountdown
               refreshKey={contributionsChanged}
               onNavigate={handleNavigate}
@@ -419,55 +427,20 @@ export function App() {
             </div>
 
             {/* Navigation Tabs */}
-            <div className="flex items-center bg-muted/65 p-1 rounded-xl border border-border/40">
-              <Button
-                variant={activeTab === "home" ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => setActiveTab("home")}
-                className="h-8 rounded-lg px-3 text-xs gap-1.5 font-semibold"
-              >
-                <Home className="w-3.5 h-3.5" />
-                <span>Home</span>
-              </Button>
-              <Button
-                variant={activeTab === "chat" ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => setActiveTab("chat")}
-                className="h-8 rounded-lg px-3 text-xs gap-1.5 font-semibold"
-              >
-                <MessageSquare className="w-3.5 h-3.5" />
-                <span>Chat</span>
-              </Button>
-              <Button
-                variant={activeTab === "uploads" ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => setActiveTab("uploads")}
-                className="h-8 rounded-lg px-3 text-xs gap-1.5 font-semibold"
-              >
-                <Boxes className="w-3.5 h-3.5" />
-                <span>Uploads</span>
-              </Button>
-              <Button
-                variant={activeTab === "settings" ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => setActiveTab("settings")}
-                className="h-8 rounded-lg px-3 text-xs gap-1.5 font-semibold"
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span>Settings</span>
-              </Button>
-              {user.isAdmin === 1 && (
+            <nav aria-label="Primary navigation" className="hidden lg:flex items-center bg-muted/65 p-1 rounded-xl border border-border/40">
+              {navItems.map(({ tab, label, icon: Icon }) => (
                 <Button
-                  variant={activeTab === "admin" ? "secondary" : "ghost"}
+                  key={tab}
+                  variant={activeTab === tab ? "secondary" : "ghost"}
                   size="sm"
-                  onClick={() => setActiveTab("admin")}
+                  onClick={() => setActiveTab(tab)}
                   className="h-8 rounded-lg px-3 text-xs gap-1.5 font-semibold"
                 >
-                  <Shield className="w-3.5 h-3.5" />
-                  <span>Admin</span>
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{label}</span>
                 </Button>
-              )}
-            </div>
+              ))}
+            </nav>
 
             <FeedbackButton />
 
@@ -500,12 +473,12 @@ export function App() {
 
       {/* Main Container — chat fills the viewport; other tabs scroll centered */}
       {activeTab === "chat" ? (
-        <main className="flex-1 min-h-0 w-full max-w-[1400px] mx-auto px-3 sm:px-4 py-4">
+        <main className="flex-1 min-h-0 min-w-0 w-full max-w-[1400px] mx-auto p-2 sm:px-4 sm:py-4">
           <ChatPanel user={user} onRefreshUser={fetchUser} />
         </main>
       ) : (
-        <main className="flex-1 min-h-0 overflow-y-auto">
-          <div className="max-w-4xl w-full mx-auto px-4 py-8">
+        <main className="flex-1 min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain">
+          <div className="max-w-4xl min-w-0 w-full mx-auto px-3 sm:px-4 py-4 sm:py-8">
              {activeTab === "home" ? (
               <HomePanel onNavigate={handleNavigate} />
             ) : activeTab === "uploads" ? (
@@ -525,6 +498,24 @@ export function App() {
           </footer>
         </main>
       )}
+
+      <nav
+        aria-label="Primary navigation"
+        className="lg:hidden flex-shrink-0 grid auto-cols-fr grid-flow-col gap-1 border-t border-border/80 bg-background/95 px-2 pt-1.5 pb-[max(0.375rem,env(safe-area-inset-bottom))] backdrop-blur-xl"
+      >
+        {navItems.map(({ tab, label, icon: Icon }) => (
+          <Button
+            key={tab}
+            variant={activeTab === tab ? "secondary" : "ghost"}
+            onClick={() => setActiveTab(tab)}
+            className="h-12 min-w-0 flex-col gap-0.5 rounded-xl px-0.5 text-[9px] min-[400px]:text-[10px] font-semibold"
+            aria-current={activeTab === tab ? "page" : undefined}
+          >
+            <Icon className="w-4 h-4" />
+            <span>{label}</span>
+          </Button>
+        ))}
+      </nav>
     </div>
   );
 }

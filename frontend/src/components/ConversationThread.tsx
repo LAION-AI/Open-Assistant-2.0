@@ -91,7 +91,7 @@ export function ConversationThread({ conv }: { conv: Conversation }) {
   const remaining = turns.length - visible;
 
   return (
-    <div className="rounded-xl border border-border/40 bg-background/30 p-4 space-y-3 overflow-hidden">
+    <div className="min-w-0 rounded-xl border border-border/40 bg-background/30 p-3 sm:p-4 space-y-3 overflow-hidden">
       {turns.length > CHUNK && (
         <div className="text-[10px] text-muted-foreground/70 pb-1">
           Showing {Math.min(visible, turns.length).toLocaleString()} of {turns.length.toLocaleString()} turns
@@ -125,7 +125,7 @@ export function ConversationThread({ conv }: { conv: Conversation }) {
                 <div className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/60 mb-1 px-1">
                   Turn {turn.userTurn}
                 </div>
-                <div className="max-w-[85%] px-3.5 py-2.5 rounded-2xl rounded-br-md bg-indigo-600/20 border border-indigo-500/25 text-foreground/90 text-[11.5px]">
+                <div className="max-w-[94%] sm:max-w-[85%] min-w-0 break-words px-3.5 py-2.5 rounded-2xl rounded-br-md bg-indigo-600/20 border border-indigo-500/25 text-foreground/90 text-[11.5px]">
                   <MessageContent content={turn.user.content} images={turn.user.images} />
                 </div>
               </div>
@@ -141,7 +141,7 @@ export function ConversationThread({ conv }: { conv: Conversation }) {
 
                 {/* Reasoning accordion */}
                 {split.thinking && (
-                  <div className="w-full max-w-[85%] mb-2">
+                  <div className="w-full max-w-[94%] sm:max-w-[85%] mb-2">
                     <button
                       onClick={() => toggle(thinkKey)}
                       className="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-500/8 border border-violet-500/20 hover:bg-violet-500/15 transition-all text-left"

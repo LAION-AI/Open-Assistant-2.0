@@ -375,13 +375,13 @@ export function UploadsPanel({
                   <div key={conv.id}>
                     <div
                       onClick={() => setExpanded(open ? null : conv.id)}
-                      className="px-5 py-3.5 flex items-center justify-between cursor-pointer select-none hover:bg-muted/10 transition-all"
+                      className="px-3 sm:px-5 py-3.5 flex items-center justify-between gap-2 cursor-pointer select-none hover:bg-muted/10 transition-all"
                     >
-                      <div className="flex items-center gap-3 text-xs min-w-0 flex-1">
+                      <div className="flex items-center gap-2 sm:gap-3 text-xs min-w-0 flex-1">
                         <PlatformBadge platform={conv.platform} />
                         {conv.model && (
                           <div
-                            className="px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-[10px] text-indigo-400 font-medium font-mono truncate max-w-[160px] flex-shrink-0"
+                            className="hidden sm:block px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 text-[10px] text-indigo-400 font-medium font-mono truncate max-w-[160px] flex-shrink-0"
                             title={conv.model}
                           >
                             {conv.model}
@@ -391,12 +391,12 @@ export function UploadsPanel({
                           <span>{conv.turnCount} {conv.turnCount === 1 ? "turn" : "turns"}</span>
                         </div>
                         {conversationHasThinking(conv) && (
-                          <div className="flex items-center gap-1 text-[10px] text-violet-400 bg-violet-500/10 border border-violet-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0">
+                          <div className="hidden sm:flex items-center gap-1 text-[10px] text-violet-400 bg-violet-500/10 border border-violet-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0">
                             <Brain className="w-3 h-3" />
                           </div>
                         )}
                         {isRedacted(conv) && (
-                          <div className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0">
+                          <div className="hidden sm:flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0">
                             <ShieldCheck className="w-3 h-3" />
                             <span>Redacted</span>
                           </div>
@@ -404,12 +404,12 @@ export function UploadsPanel({
                         <div className="text-muted-foreground truncate flex-1 min-w-0 pr-2 font-medium">
                           {truncateText(conversationTitle(conv) || getLastUserMessage(conv.latest.prompt), 80)}
                         </div>
-                        <div className="flex items-center gap-1 text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full flex-shrink-0">
+                        <div className="hidden sm:flex items-center gap-1 text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full flex-shrink-0">
                           <Database className="w-3 h-3" />
                           <span>{conv.totalTokens} tk</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 pl-3 flex-shrink-0 text-muted-foreground">
+                      <div className="flex items-center gap-1 sm:gap-2 sm:pl-3 flex-shrink-0 text-muted-foreground">
                         <div className="hidden sm:flex items-center gap-1 text-xs">
                           <Calendar className="w-3.5 h-3.5" />
                           <span>{formatTime(conv.updatedAt)}</span>
@@ -454,7 +454,7 @@ export function UploadsPanel({
                     </div>
 
                     {open && (
-                      <div className="px-5 pb-5 pt-1 bg-muted/10 border-t border-border/20">
+                      <div className="px-2 sm:px-5 pb-3 sm:pb-5 pt-1 bg-muted/10 border-t border-border/20">
                         <ConversationThread conv={conv} />
                       </div>
                     )}

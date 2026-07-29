@@ -397,7 +397,7 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
   };
 
   return (
-    <div className="flex h-full bg-card/30 backdrop-blur-md rounded-2xl border border-border/70 overflow-hidden shadow-xl">
+    <div className="flex h-full min-w-0 bg-card/30 backdrop-blur-md rounded-xl sm:rounded-2xl border border-border/70 overflow-hidden shadow-xl">
       {/* Conversation Sidebar */}
       <aside className="hidden md:flex w-72 flex-shrink-0 flex-col border-r border-border/60 bg-card/40">
         <div className="p-3 border-b border-border/50">
@@ -462,7 +462,7 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
       {/* Main Chat Column */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Panel Header */}
-        <div className="flex items-center justify-between px-6 py-3.5 border-b border-border/70 bg-card/50">
+        <div className="flex min-w-0 items-center justify-between gap-2 px-3 sm:px-6 py-2.5 sm:py-3.5 border-b border-border/70 bg-card/50">
           <div className="flex items-center gap-2 min-w-0">
             <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0"></div>
             <span className="font-semibold text-sm text-foreground truncate">
@@ -479,7 +479,7 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
               <Plus className="w-4 h-4" />
             </Button>
           </div>
-          <div className="flex items-center gap-3 text-xs font-medium flex-shrink-0">
+          <div className="flex min-w-0 items-center gap-1.5 sm:gap-3 text-xs font-medium flex-shrink">
             {messages.length > 0 && (
               <button
                 onClick={redactConversation}
@@ -496,7 +496,7 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
                 value={model}
                 onChange={e => setModel(e.target.value)}
                 title="Model — switch on the fly"
-                className="h-8 max-w-[200px] rounded-lg border border-border/70 bg-background/60 px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                className="h-8 min-w-0 w-24 min-[400px]:w-28 sm:w-auto sm:max-w-[200px] rounded-lg border border-border/70 bg-background/60 px-1.5 sm:px-2 text-[11px] sm:text-xs text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               >
                 {models.map(m => (
                   <option key={m} value={m}>
@@ -506,12 +506,12 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
               </select>
             )}
             {isBYOE ? (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+              <div className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
                 <Server className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">BYOE Mode</span>
               </div>
             ) : (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+              <div className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
                 <Coins className="w-3.5 h-3.5" />
                 <span>{user.credits}</span>
                 <span className="hidden sm:inline">Credits</span>
@@ -521,9 +521,9 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
         </div>
 
         {/* Messages Scroll Area */}
-        <div className="flex-1 px-4 sm:px-6 py-6 overflow-y-auto space-y-6">
+        <div className="flex-1 min-h-0 min-w-0 px-3 sm:px-6 py-4 sm:py-6 overflow-x-hidden overflow-y-auto overscroll-contain space-y-4 sm:space-y-6">
           {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center p-8 space-y-4 max-w-md mx-auto">
+            <div className="h-full flex flex-col items-center justify-center text-center p-4 sm:p-8 space-y-4 max-w-md mx-auto">
               <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center border border-indigo-500/20 text-indigo-400">
                 <Server className="w-6 h-6" />
               </div>
@@ -546,13 +546,13 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
                 if (msg.role === "user") {
                   return (
                     <div key={msg.id} className="flex justify-end">
-                      <div className="max-w-[80%] rounded-2xl rounded-br-md bg-indigo-600 text-white px-4 py-3 text-sm leading-relaxed shadow-md">
+                      <div className="max-w-[92%] sm:max-w-[80%] min-w-0 break-words rounded-2xl rounded-br-md bg-indigo-600 text-white px-3.5 sm:px-4 py-3 text-sm leading-relaxed shadow-md">
                         {msg.image && (
                           <div className="mb-2 max-w-[200px] overflow-hidden rounded-lg border border-white/10">
                             <img src={msg.image} alt="Uploaded payload" className="w-full h-auto object-cover" />
                           </div>
                         )}
-                        {msg.content && <div className="whitespace-pre-wrap">{msg.content}</div>}
+                        {msg.content && <div className="whitespace-pre-wrap break-words">{msg.content}</div>}
                       </div>
                     </div>
                   );
@@ -561,7 +561,7 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
                 return (
                   <div key={msg.id} className="flex flex-col items-start gap-1.5 group">
                     {thinking && (
-                      <div className="w-full max-w-[85%]">
+                      <div className="w-full max-w-[94%] sm:max-w-[85%]">
                         <button
                           onClick={() => toggleThinking(msg.id)}
                           className="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-violet-500/8 border border-violet-500/20 hover:bg-violet-500/15 transition-all text-left"
@@ -590,7 +590,7 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
                     )}
 
                     {(text || (!thinking && isStreaming)) && (
-                      <div className="max-w-[80%] rounded-2xl rounded-bl-md bg-muted text-foreground border border-border/50 px-4 py-3 shadow-md relative">
+                      <div className="max-w-[94%] sm:max-w-[80%] min-w-0 break-words rounded-2xl rounded-bl-md bg-muted text-foreground border border-border/50 px-3.5 sm:px-4 py-3 shadow-md relative">
                         <Markdown>{text}</Markdown>
                         {isStreaming && !text && (
                           <span className="inline-block w-1.5 h-4 align-middle bg-muted-foreground/60 animate-pulse rounded-sm" />
@@ -630,7 +630,7 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
 
         {/* Error / Alert Display */}
         {error && (
-          <div className="px-6 py-2 bg-destructive/10 border-t border-b border-destructive/20 text-destructive text-xs flex items-center gap-2">
+          <div className="px-3 sm:px-6 py-2 bg-destructive/10 border-t border-b border-destructive/20 text-destructive text-xs flex items-center gap-2">
             <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
             <span>{error}</span>
           </div>
@@ -638,7 +638,7 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
 
         {/* Redaction status */}
         {redactStatus && !error && (
-          <div className="px-6 py-2 bg-violet-500/10 border-t border-b border-violet-500/20 text-violet-300 text-xs flex items-center gap-2">
+          <div className="px-3 sm:px-6 py-2 bg-violet-500/10 border-t border-b border-violet-500/20 text-violet-300 text-xs flex items-center gap-2">
             <ShieldCheck className="w-3.5 h-3.5 flex-shrink-0" />
             <span>{redactStatus}</span>
           </div>
@@ -646,8 +646,8 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
 
         {/* Image Upload Preview */}
         {image && (
-          <div className="px-6 py-3 bg-muted/30 border-t border-border/50 flex items-center justify-between">
-            <div className="flex items-center gap-3">
+          <div className="px-3 sm:px-6 py-3 bg-muted/30 border-t border-border/50 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-3">
               <div className="relative w-12 h-12 rounded-lg border border-border overflow-hidden bg-background">
                 <img src={image} alt="Upload preview" className="w-full h-full object-cover" />
               </div>
@@ -667,7 +667,7 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
         {/* Input Form Area */}
         <form
           onSubmit={handleSubmit}
-          className="px-4 sm:px-6 py-4 border-t border-border/70 bg-card/50 flex items-end gap-3"
+          className="px-3 sm:px-6 py-3 sm:py-4 border-t border-border/70 bg-card/50 flex min-w-0 items-end gap-2 sm:gap-3"
         >
           <input
             type="file"
@@ -691,7 +691,7 @@ export function ChatPanel({ user, onRefreshUser }: ChatPanelProps) {
             value={input}
             onChange={e => setInput(e.target.value)}
             placeholder="Ask Open Assistant anything..."
-            className="min-h-[40px] max-h-[160px] resize-none py-2 px-3 rounded-xl border border-input focus-visible:ring-1 focus-visible:ring-ring flex-1"
+            className="min-h-[40px] min-w-0 max-h-[160px] resize-none py-2 px-3 rounded-xl border border-input focus-visible:ring-1 focus-visible:ring-ring flex-1"
             onKeyDown={e => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();

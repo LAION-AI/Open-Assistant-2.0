@@ -285,7 +285,7 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
   };
 
   return (
-    <div className="space-y-6 max-w-xl mx-auto">
+    <div className="min-w-0 space-y-6 max-w-xl mx-auto">
     <LoginMethods user={user} onUpdateUser={onUpdateUser} />
 
     {/* Anchor target for the "Set up 2FA" banner link. */}
@@ -295,7 +295,7 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
 
     <RedactionSettings />
        {/* Sub-tab selection pills */}
-    <div className="flex rounded-xl bg-background/50 border border-border/60 p-1.5 gap-1.5 animate-fade-in">
+    <div className="grid grid-cols-1 sm:grid-cols-3 rounded-xl bg-background/50 border border-border/60 p-1.5 gap-1.5 animate-fade-in">
       <button
         type="button"
         onClick={() => onSubTabChange("byoe")}
@@ -348,7 +348,7 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
             Donate interaction data using your own API endpoint and compute. By entering your endpoint details below, chat requests will stream directly through your custom API key.
           </CardDescription>
         </CardHeader>
-        <CardContent className="p-6">
+        <CardContent className="p-4 sm:p-6">
           <form onSubmit={handleSave} className="space-y-6">
             {error && (
               <div className="p-3 bg-destructive/10 border border-destructive/20 text-destructive text-xs rounded-xl flex items-center gap-2">
@@ -458,7 +458,7 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
               </p>
             </div>
 
-            <div className="pt-2 flex gap-3">
+            <div className="pt-2 flex flex-col min-[420px]:flex-row gap-3">
               <Button
                 type="submit"
                 disabled={loading}
@@ -497,7 +497,7 @@ export function SettingsPanel({ user, onUpdateUser, subTab, onSubTabChange }: Se
             open dataset collection and forwarded to your configured endpoint.
           </CardDescription>
         </CardHeader>
-        <CardContent className="p-6 space-y-5">
+        <CardContent className="p-4 sm:p-6 space-y-5">
           {/* Base URL */}
           <div className="space-y-2">
             <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">

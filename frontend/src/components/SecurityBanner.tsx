@@ -31,11 +31,11 @@ export function SecurityBanner({ user, onNavigate }: Props) {
 
   return (
     <div className="w-full bg-amber-500/10 border-b border-amber-500/25 flex-shrink-0">
-      <div className="w-full px-4 py-2 flex items-center gap-3 text-[11.5px] text-amber-300">
+      <div className="w-full px-3 sm:px-4 py-2 flex flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-1.5 text-[11.5px] text-amber-300">
         <ShieldAlert className="w-4 h-4 flex-shrink-0" />
-        <span className="flex-1 leading-relaxed">
+        <span className="min-w-0 flex-1 leading-relaxed">
           <strong className="font-semibold">Two-factor authentication is off.</strong>{" "}
-          <span className="text-amber-300/85">
+          <span className="hidden sm:inline text-amber-300/85">
             Your account is protected by a password alone — add a second factor so a leaked password
             isn't enough to sign in.
           </span>

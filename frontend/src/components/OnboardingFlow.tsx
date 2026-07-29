@@ -126,10 +126,10 @@ export function OnboardingFlow({ open, username, onFinish, onNavigate }: Props) 
     <Dialog open={open} onOpenChange={o => !o && onFinish()}>
       <DialogContent
         showCloseButton={false}
-        className="sm:max-w-lg bg-card/95 backdrop-blur-xl border-border/80 rounded-2xl p-0 overflow-hidden"
+        className="sm:max-w-lg bg-card/95 backdrop-blur-xl border-border/80 rounded-2xl p-0"
       >
         {/* Progress */}
-        <div className="flex gap-1.5 px-6 pt-6">
+        <div className="flex gap-1.5 px-4 sm:px-6 pt-4 sm:pt-6">
           {STEPS.map((s, i) => (
             <div
               key={s.title}
@@ -140,13 +140,13 @@ export function OnboardingFlow({ open, username, onFinish, onNavigate }: Props) 
           ))}
         </div>
 
-        <div className="px-6 pb-6 pt-5 space-y-5">
-          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ring-1 ${tint.bg} ${tint.ring} ${tint.text}`}>
+        <div className="px-4 sm:px-6 pb-4 sm:pb-6 pt-4 sm:pt-5 space-y-4 sm:space-y-5">
+          <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl flex items-center justify-center ring-1 ${tint.bg} ${tint.ring} ${tint.text}`}>
             {step.icon}
           </div>
 
           <div className="space-y-2">
-            <h2 className="text-2xl font-extrabold tracking-tight leading-tight">
+            <h2 className="text-xl sm:text-2xl font-extrabold tracking-tight leading-tight">
               {index === 0 && username ? `Welcome, ${username}` : step.title}
             </h2>
             <p className="text-sm text-muted-foreground leading-relaxed">{step.lead}</p>
@@ -170,7 +170,7 @@ export function OnboardingFlow({ open, username, onFinish, onNavigate }: Props) 
             </button>
           )}
 
-          <div className="flex items-center justify-between pt-2 border-t border-border/50">
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/50">
             <button
               onClick={onFinish}
               className="text-[11px] text-muted-foreground hover:text-foreground transition-colors"
@@ -178,7 +178,7 @@ export function OnboardingFlow({ open, username, onFinish, onNavigate }: Props) 
               {isLast ? "Close" : "Skip for now"}
             </button>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
               {index > 0 && (
                 <Button variant="ghost" onClick={() => setIndex(i => i - 1)} className="h-9 rounded-lg text-xs gap-1.5">
                   <ArrowLeft className="w-3.5 h-3.5" /> Back
