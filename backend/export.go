@@ -82,7 +82,10 @@ type ExportRow struct {
 	Response       json.RawMessage `json:"response"`
 	Tokens         int             `json:"tokens"`
 	CreatedAt      int64           `json:"createdAt"`
-	ConsentVersion string          `json:"consentVersion"`
+	// Whether on-device redaction ran before this instance was stored. Provenance
+	// for downstream users, not a guarantee that the instance is PII-free.
+	ClientRedacted bool   `json:"clientRedacted"`
+	ConsentVersion string `json:"consentVersion"`
 }
 
 // buildExport filters logs down to consenting contributors and pseudonymises
@@ -102,6 +105,7 @@ func buildExport(logs []*db.LogEntry, consented map[string]bool, consentVersion 
 			Response:       l.Response,
 			Tokens:         l.Tokens,
 			CreatedAt:      l.CreatedAt,
+			ClientRedacted: l.ClientRedacted,
 			ConsentVersion: consentVersion,
 		})
 	}

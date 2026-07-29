@@ -14,6 +14,14 @@ type LogEntry struct {
 	Response       json.RawMessage `json:"response"`
 	Tokens         int             `json:"tokens"`
 	CreatedAt      int64           `json:"createdAt"`
+	// ClientRedacted records whether on-device PII redaction ran over this
+	// instance before it was stored. It is a property of the instance, not of
+	// the account: the same contributor can redact one conversation and not the
+	// next, and a release needs to be able to say which is which.
+	//
+	// It says redaction *ran*, not that the instance is clean — the model is
+	// statistical. Treat it as provenance, never as a safety guarantee.
+	ClientRedacted bool `json:"clientRedacted"`
 }
 
 // ToRawJSON returns valid JSON for storage/serialization: the bytes as-is when
@@ -65,6 +73,9 @@ type LogRepository interface {
 	DeleteByConversation(ctx context.Context, userID, conversationID string) (int64, error)
 	// DeleteByID removes a single owned log row.
 	DeleteByID(ctx context.Context, userID string, id int64) (int64, error)
+	// UpdateContent* are the on-device redaction path: they replace the stored
+	// text with its redacted form and therefore mark the row client-redacted.
+	//
 	// DeleteAllByUser removes every row a user has contributed. Used by the
 	// self-service "delete my data" and account-deletion paths, where leaving a
 	// single row behind would make the erasure a lie.

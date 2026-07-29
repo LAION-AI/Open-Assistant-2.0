@@ -326,6 +326,10 @@ func main() {
 			Prompt         string `json:"prompt"`
 			Response       string `json:"response"`
 			Tokens         int    `json:"tokens"`
+			// Set by the uploader when on-device redaction ran over this
+			// content. Absent means "not redacted", which is the safe default:
+			// a missing field must never read as a privacy assurance.
+			ClientRedacted bool `json:"clientRedacted"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
@@ -341,6 +345,7 @@ func main() {
 			Response:       db.ToRawJSON([]byte(payload.Response)),
 			Tokens:         payload.Tokens,
 			CreatedAt:      time.Now().Unix(),
+			ClientRedacted: payload.ClientRedacted,
 		}
 
 		// Upsert on (user_id, conversation_id) so multi-turn sessions that resend

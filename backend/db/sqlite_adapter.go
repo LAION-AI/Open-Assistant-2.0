@@ -51,7 +51,8 @@ func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
 		prompt TEXT,
 		response TEXT,
 		tokens INTEGER,
-		created_at INTEGER
+		created_at INTEGER,
+		client_redacted INTEGER DEFAULT 0
 	);`
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
@@ -62,6 +63,7 @@ func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
 	// because "duplicate column name" is expected once a migration is applied.
 	_, _ = db.Exec(`ALTER TABLE interaction_logs ADD COLUMN conversation_id TEXT`)
 	_, _ = db.Exec(`ALTER TABLE interaction_logs ADD COLUMN platform TEXT`)
+	_, _ = db.Exec(`ALTER TABLE interaction_logs ADD COLUMN client_redacted INTEGER DEFAULT 0`)
 
 	// Feedback table (user suggestions / criticism).
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS feedback (
@@ -90,10 +92,17 @@ func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
 	return &SQLiteRepository{db: db}, nil
 }
 
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func (r *SQLiteRepository) SaveLog(ctx context.Context, entry *LogEntry) error {
-	query := `INSERT INTO interaction_logs (user_id, conversation_id, platform, prompt, response, tokens, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+	query := `INSERT INTO interaction_logs (user_id, conversation_id, platform, prompt, response, tokens, created_at, client_redacted) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 	// Store as TEXT (string) to keep the column's TEXT affinity.
-	_, err := r.db.ExecContext(ctx, query, entry.UserID, entry.ConversationID, entry.Platform, string(entry.Prompt), string(entry.Response), entry.Tokens, entry.CreatedAt)
+	_, err := r.db.ExecContext(ctx, query, entry.UserID, entry.ConversationID, entry.Platform, string(entry.Prompt), string(entry.Response), entry.Tokens, entry.CreatedAt, boolToInt(entry.ClientRedacted))
 	return err
 }
 
@@ -103,8 +112,8 @@ func (r *SQLiteRepository) UpsertLog(ctx context.Context, entry *LogEntry) error
 		return r.SaveLog(ctx, entry)
 	}
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE interaction_logs SET platform = ?, prompt = ?, response = ?, tokens = ?, created_at = ? WHERE user_id = ? AND conversation_id = ?`,
-		entry.Platform, string(entry.Prompt), string(entry.Response), entry.Tokens, entry.CreatedAt, entry.UserID, entry.ConversationID)
+		`UPDATE interaction_logs SET platform = ?, prompt = ?, response = ?, tokens = ?, created_at = ?, client_redacted = ? WHERE user_id = ? AND conversation_id = ?`,
+		entry.Platform, string(entry.Prompt), string(entry.Response), entry.Tokens, entry.CreatedAt, boolToInt(entry.ClientRedacted), entry.UserID, entry.ConversationID)
 	if err != nil {
 		return err
 	}
@@ -115,12 +124,12 @@ func (r *SQLiteRepository) UpsertLog(ctx context.Context, entry *LogEntry) error
 }
 
 func (r *SQLiteRepository) GetLogs(ctx context.Context) ([]*LogEntry, error) {
-	query := `SELECT id, user_id, COALESCE(conversation_id, ''), COALESCE(platform, ''), prompt, response, tokens, created_at FROM interaction_logs ORDER BY created_at DESC`
+	query := `SELECT id, user_id, COALESCE(conversation_id, ''), COALESCE(platform, ''), prompt, response, tokens, created_at, COALESCE(client_redacted, 0) FROM interaction_logs ORDER BY created_at DESC`
 	return r.queryLogs(ctx, query)
 }
 
 func (r *SQLiteRepository) GetLogsByUser(ctx context.Context, userID string) ([]*LogEntry, error) {
-	query := `SELECT id, user_id, COALESCE(conversation_id, ''), COALESCE(platform, ''), prompt, response, tokens, created_at FROM interaction_logs WHERE user_id = ? ORDER BY created_at DESC`
+	query := `SELECT id, user_id, COALESCE(conversation_id, ''), COALESCE(platform, ''), prompt, response, tokens, created_at, COALESCE(client_redacted, 0) FROM interaction_logs WHERE user_id = ? ORDER BY created_at DESC`
 	return r.queryLogs(ctx, query, userID)
 }
 
@@ -144,7 +153,7 @@ func (r *SQLiteRepository) GetLogsPaged(ctx context.Context, userID, category st
 		return nil, 0, err
 	}
 
-	query := "SELECT id, user_id, COALESCE(conversation_id, ''), COALESCE(platform, ''), prompt, response, tokens, created_at FROM interaction_logs" +
+	query := "SELECT id, user_id, COALESCE(conversation_id, ''), COALESCE(platform, ''), prompt, response, tokens, created_at, COALESCE(client_redacted, 0) FROM interaction_logs" +
 		where + " ORDER BY created_at DESC"
 	if limit > 0 {
 		query += " LIMIT ? OFFSET ?"
@@ -172,12 +181,14 @@ func (r *SQLiteRepository) queryLogs(ctx context.Context, query string, args ...
 	for rows.Next() {
 		var entry LogEntry
 		var prompt, response string
-		if err := rows.Scan(&entry.ID, &entry.UserID, &entry.ConversationID, &entry.Platform, &prompt, &response, &entry.Tokens, &entry.CreatedAt); err != nil {
+		var redacted int
+		if err := rows.Scan(&entry.ID, &entry.UserID, &entry.ConversationID, &entry.Platform, &prompt, &response, &entry.Tokens, &entry.CreatedAt, &redacted); err != nil {
 			return nil, err
 		}
 		// Embed stored text as nested JSON (legacy/non-JSON values are wrapped).
 		entry.Prompt = ToRawJSON([]byte(prompt))
 		entry.Response = ToRawJSON([]byte(response))
+		entry.ClientRedacted = redacted != 0
 		entries = append(entries, &entry)
 	}
 	return entries, nil
@@ -219,7 +230,7 @@ func (r *SQLiteRepository) DeleteAllByUser(ctx context.Context, userID string) (
 
 func (r *SQLiteRepository) UpdateContent(ctx context.Context, userID, conversationID string, prompt, response json.RawMessage, tokens int) (int64, error) {
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE interaction_logs SET prompt = ?, response = ?, tokens = ? WHERE user_id = ? AND conversation_id = ?`,
+		`UPDATE interaction_logs SET prompt = ?, response = ?, tokens = ?, client_redacted = 1 WHERE user_id = ? AND conversation_id = ?`,
 		string(prompt), string(response), tokens, userID, conversationID)
 	if err != nil {
 		return 0, err
@@ -229,7 +240,7 @@ func (r *SQLiteRepository) UpdateContent(ctx context.Context, userID, conversati
 }
 func (r *SQLiteRepository) UpdateContentByID(ctx context.Context, userID string, id int64, prompt, response json.RawMessage, tokens int) (int64, error) {
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE interaction_logs SET prompt = ?, response = ?, tokens = ? WHERE user_id = ? AND id = ?`,
+		`UPDATE interaction_logs SET prompt = ?, response = ?, tokens = ?, client_redacted = 1 WHERE user_id = ? AND id = ?`,
 		string(prompt), string(response), tokens, userID, id)
 	if err != nil {
 		return 0, err

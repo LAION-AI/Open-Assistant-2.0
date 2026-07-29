@@ -31,7 +31,8 @@ infrastructure runs on rented servers in Helsinki, Finland (EU).
 **What do the instances represent?**
 One instance is a conversation: an ordered exchange between a person and an AI
 model, with the model name, the originating platform, a token count, a
-timestamp, and a pseudonymous contributor identifier. Instances arrive by three
+timestamp, a pseudonymous contributor identifier, a flag for whether on-device
+redaction ran, and the consent-document version it was released under. Instances arrive by three
 routes:
 
 1. **Browser chat** — conversations held in the platform's own UI.
@@ -92,10 +93,16 @@ Contributors can erase their contributions at any time — individually ("My
 Uploads"), all at once, or by deleting their account entirely, all self-service
 in the app. Erased data leaves the working corpus and every subsequent release.
 
-**Ethical review.** No institutional review board process was undertaken; the
-platform is operated by a nonprofit association rather than a university.
-*[TO CONFIRM before submission: whether the target venue expects an IRB
-statement, and whether a partner institution should provide one.]*
+**Ethical review.** Reviewed by LAION's internal Research Ethics Committee under
+[protocol 001](ethics/PROTOCOL-001-interaction-corpus.md), which operates under a
+published [charter](ethics/CHARTER.md) requiring that a majority of voting
+members on any decision be independent of the work under review.
+
+LAION is a nonprofit research association and does **not** operate an accredited
+institutional review board; German law requires no ethics review for non-medical
+research of this kind. This review should be cited as internal committee review,
+never as IRB approval. The charter, the protocol and the signed decision record —
+including any dissent — are public in [`ethics/`](ethics/).
 
 ## Preprocessing / cleaning / labeling
 
@@ -121,10 +128,19 @@ Before any public release:
 Contributors may additionally redact PII **on their own device** before data
 ever reaches the server, using a local Transformers.js model
 ([`rampart`](https://huggingface.co/nationaldesignstudio/rampart) by default,
-`openai/privacy-filter` optional). Whether that ran is a property of the
-contributor's session, not of the instance — *[TO DECIDE: record a per-instance
-flag for whether client-side redaction was applied, which reviewers are likely
-to ask about.]*
+`openai/privacy-filter` optional).
+
+Whether that ran is recorded **per instance** and released as `clientRedacted`.
+It is set when a conversation was redacted before upload, and also when a
+contributor redacts a stored conversation afterwards. Two cautions for anyone
+using the field:
+
+- It records that redaction **ran**, not that the instance is clean. The model
+  is statistical, and `true` is not a guarantee.
+- By the same token `false` marks instances more likely to contain residual PII.
+  That is useful for filtering and for reporting coverage, but it also makes
+  those instances easier to single out — weigh that before using the field to
+  prioritise anything other than further cleaning.
 
 Raw, unfiltered logs are not published.
 
@@ -181,6 +197,7 @@ recalled — contributors are told this before consenting, and it is stated in
 
 ## Related documents
 
+- [Ethics charter and protocol 001](ethics/)
 - [Terms of Service](frontend/legal/terms.md)
 - [Privacy Policy](frontend/legal/privacy.md)
 - [Impressum](frontend/legal/impressum.md)

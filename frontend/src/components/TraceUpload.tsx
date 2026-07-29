@@ -404,6 +404,10 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
             model: e.trace.model,
             messages: redacted.get(e.id)?.messages || e.trace.messages,
             source: redacted.get(e.id)?.source ?? e.trace.source,
+            // Per conversation, not per upload: with auto-redact off, a
+            // conversation the user redacted by hand earlier still counts, and
+            // one they skipped does not.
+            clientRedacted: redacted.has(e.id) || e.redactions != null,
           })),
         }),
       });

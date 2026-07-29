@@ -2196,6 +2196,7 @@ const server = serve({
               userId: user.id,
               conversationId,
               platform,
+              clientRedacted: tr.clientRedacted === true,
               prompt,
               response,
               tokens,
