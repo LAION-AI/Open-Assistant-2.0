@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -221,5 +222,62 @@ func TestExportHandlerWithNoConsentExportsNothing(t *testing.T) {
 	}
 	if body := strings.TrimSpace(rec.Body.String()); body != "" {
 		t.Fatalf("expected an empty export, got %q", body)
+	}
+}
+
+// --- upload gate ------------------------------------------------------------
+
+// writeAuthDB builds a user.db shaped like the frontend's, for the gate that
+// keeps password-only accounts from uploading until they add a second factor.
+func writeAuthDB(t *testing.T, twofa string, passkeys int) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "user.db")
+	h, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer h.Close()
+	h.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, api_key TEXT, twofa_method TEXT)`)
+	h.Exec(`CREATE TABLE credentials (id TEXT PRIMARY KEY, user_id TEXT)`)
+	if twofa == "" {
+		h.Exec(`INSERT INTO users (id, twofa_method) VALUES ('u1', NULL)`)
+	} else {
+		h.Exec(`INSERT INTO users (id, twofa_method) VALUES ('u1', ?)`, twofa)
+	}
+	for i := 0; i < passkeys; i++ {
+		h.Exec(`INSERT INTO credentials (id, user_id) VALUES (?, 'u1')`, "cred-"+strconv.Itoa(i))
+	}
+	return path
+}
+
+func TestUploadGate(t *testing.T) {
+	cases := []struct {
+		name     string
+		twofa    string
+		passkeys int
+		want     bool
+	}{
+		{"password only, no second factor", "", 0, false},
+		{"password with TOTP", "totp", 0, true},
+		{"password with email codes", "email", 0, true},
+		{"passkey, already multi-factor", "", 1, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			creds := newCredStore(writeAuthDB(t, tc.twofa, tc.passkeys))
+			defer creds.Close()
+			if got := creds.uploadAllowed("u1"); got != tc.want {
+				t.Errorf("uploadAllowed = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUploadGateFailsClosedOnAnUnreadableStore(t *testing.T) {
+	// A store we cannot read must not become an open door.
+	creds := newCredStore(filepath.Join(t.TempDir(), "does-not-exist.db"))
+	defer creds.Close()
+	if creds.uploadAllowed("u1") {
+		t.Error("gate opened when the credential store could not be read")
 	}
 }

@@ -776,6 +776,34 @@ function formatCount(n: number): string {
   return String(n);
 }
 
+/**
+ * Whether an account may contribute data yet.
+ *
+ * A password-only account with no second factor is one leaked password away
+ * from someone else uploading under this identity — and uploads are the one
+ * action here that is irreversible in substance, because consented data can
+ * reach a public release. Passkeys are hardware-bound and already multi-factor,
+ * so an account with one is fine as it stands.
+ *
+ * The signup screen promises exactly this ("needs two-factor authentication set
+ * up before your first trace upload"), so it is enforced here rather than left
+ * as a label.
+ */
+async function uploadGate(user: any): Promise<{ allowed: true } | { allowed: false; error: string }> {
+  if (!user) return { allowed: false, error: "Unauthorized" };
+
+  const creds = await dbAdapter.getUserCredentials(user.id);
+  if (creds.length > 0) return { allowed: true };
+  if (user.twofaMethod) return { allowed: true };
+
+  return {
+    allowed: false,
+    error:
+      "Set up two-factor authentication before your first upload — Settings → Security. " +
+      "Adding a passkey works too, and needs no code.",
+  };
+}
+
 // Resolve a user from an `Authorization: Bearer <api key>` header.
 async function userFromApiKey(req: Request): Promise<any | null> {
   const auth = req.headers.get("Authorization") || "";
@@ -2157,6 +2185,11 @@ const server = serve({
         }
         if (!user) {
           return Response.json({ error: "Unauthorized" }, { status: 401 });
+        }
+
+        const gate = await uploadGate(user);
+        if (!gate.allowed) {
+          return Response.json({ error: gate.error }, { status: 403 });
         }
 
         const body = await req.json().catch(() => ({}));

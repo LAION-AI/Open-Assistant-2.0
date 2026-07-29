@@ -204,7 +204,14 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_DB_BYTES = 200 * 1024 * 1024;
 const MAX_FILES = 400;
 
-export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
+export function TraceUpload({
+  uploadBlocked,
+  onUploaded,
+}: {
+  /** Set when the account still needs a second factor; the server enforces it too. */
+  uploadBlocked?: boolean;
+  onUploaded: () => void;
+}) {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [scanning, setScanning] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -592,6 +599,17 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
               ))}
             </div>
 
+            {uploadBlocked && (
+              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300 leading-relaxed flex items-start gap-2">
+                <ShieldCheck className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                <span>
+                  <strong>Two-factor authentication required.</strong> Your account signs in with
+                  a password alone, so uploading is blocked until you add a second factor — or a
+                  passkey, which needs no codes. Set either up in Settings → Security.
+                </span>
+              </div>
+            )}
+
             <label className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-500/5 border border-amber-500/20 cursor-pointer select-none">
               <Checkbox
                 checked={acknowledged}
@@ -615,7 +633,7 @@ export function TraceUpload({ onUploaded }: { onUploaded: () => void }) {
             </label>
 
             <div className="flex items-center gap-4 flex-wrap">
-              <Button onClick={upload} disabled={uploading || redactBusy || selected.length === 0 || !acknowledged} className="h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold gap-2 disabled:opacity-50">
+              <Button onClick={upload} disabled={uploading || redactBusy || selected.length === 0 || !acknowledged || !!uploadBlocked} className="h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold gap-2 disabled:opacity-50">
                 {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
                 <span>{uploading ? (redactBusy ? "Redacting…" : "Uploading…") : `Upload ${selected.length} selected`}</span>
               </Button>

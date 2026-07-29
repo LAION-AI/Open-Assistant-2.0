@@ -80,6 +80,18 @@ export function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [legalSlug, setLegalSlug] = useState<string | null>(() => slugFromPath(window.location.pathname));
   const [signupConsent, setSignupConsent] = useState<ConsentState>(EMPTY_CONSENT);
+  // Passkeys are the default. Email + password is a deliberate detour the user
+  // has to choose, not a second option sitting next to it — it costs them a 2FA
+  // setup before they can upload, which passkeys give for free.
+  //
+  // Exception: a password-reset link lands on /?reset=<token>, which is a
+  // password flow by definition. Mount email straight away in that case, or the
+  // link would open a passkey screen with no way through.
+  const [emailPath, setEmailPath] = useState<"none" | "login" | "register">(() =>
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).has("reset")
+      ? "login"
+      : "none"
+  );
 
   const fetchUser = async () => {
     try {
@@ -261,7 +273,7 @@ export function App() {
                 </Button>
                 <p className="text-center text-[10px] text-emerald-400/80 -mt-1">Recommended — phishing-resistant, nothing to leak</p>
 
-                <div className="text-center pt-2">
+                <div className="text-center pt-2 space-y-2">
                   <button
                     type="button"
                     onClick={() => {
@@ -272,6 +284,18 @@ export function App() {
                   >
                     Don't have an account? Register a new username
                   </button>
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmailPath("login");
+                        setAuthError(null);
+                      }}
+                      className="text-[11px] text-muted-foreground/70 hover:text-foreground transition-colors cursor-pointer"
+                    >
+                      Sign in with email and password instead
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -307,7 +331,7 @@ export function App() {
                   {authLoading ? "Initializing authenticator..." : "Register Passkey"}
                 </Button>
 
-                <div className="text-center pt-2">
+                <div className="text-center pt-2 space-y-2.5">
                   <button
                     type="button"
                     onClick={() => {
@@ -319,12 +343,36 @@ export function App() {
                   >
                     Already have an account? Sign in
                   </button>
+
+                  <div className="pt-1 border-t border-border/40">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmailPath("register");
+                        setAuthError(null);
+                      }}
+                      className="mt-2.5 text-[11px] text-muted-foreground/80 hover:text-foreground transition-colors cursor-pointer leading-relaxed"
+                    >
+                      Register with email and password instead
+                    </button>
+                    <p className="text-[10px] text-muted-foreground/60 leading-relaxed mt-1">
+                      Needs two-factor authentication set up before your first trace upload.
+                      A passkey already counts as two factors.
+                    </p>
+                  </div>
                 </div>
               </form>
             )}
 
-            {/* Email + password (alternative to passkeys) */}
-            <EmailAuth onAuthed={setUser} />
+            {/* Email + password: only on screen once the user asks for it. */}
+            {emailPath !== "none" && (
+              <EmailAuth
+                onAuthed={setUser}
+                startMode={emailPath}
+                showDivider={false}
+                onExit={() => setEmailPath("none")}
+              />
+            )}
           </CardContent>
           <div className="px-6 py-4 bg-muted/30 border-t border-border/50 text-center text-[10px] text-muted-foreground/80 leading-relaxed space-y-2">
             <div className="flex items-center justify-center gap-1.5">
@@ -450,7 +498,7 @@ export function App() {
              {activeTab === "home" ? (
               <HomePanel onNavigate={handleNavigate} />
             ) : activeTab === "uploads" ? (
-              <UploadsPanel />
+              <UploadsPanel uploadBlocked={!user.hasPasskey && !user.twoFactorEnabled} />
             ) : activeTab === "settings" ? (
               <SettingsPanel user={user} onUpdateUser={(u) => setUser(u)} subTab={settingsSubTab} onSubTabChange={setSettingsSubTab} />
             ) : (

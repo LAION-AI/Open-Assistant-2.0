@@ -43,7 +43,7 @@ function formatTime(ts: number) {
   return new Date(ts > 9999999999 ? ts : ts * 1000).toLocaleString();
 }
 
-export function UploadsPanel() {
+export function UploadsPanel({ uploadBlocked }: { uploadBlocked?: boolean }) {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -261,7 +261,7 @@ export function UploadsPanel() {
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       {/* Trace uploader */}
-      <TraceUpload onUploaded={fetchData} />
+      <TraceUpload uploadBlocked={uploadBlocked} onUploaded={fetchData} />
 
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

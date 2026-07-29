@@ -219,9 +219,14 @@ one for us is:
 
 ## 9. Age limit
 
-This service is not intended for people under 16. We do not knowingly process
-data of children under 16; if you believe we have, contact us and we will
-delete it.
+This service is for adults: you must be at least 18 to hold an account. We do
+not knowingly process data of anyone under 18; if you believe we have, contact us
+and we will delete it.
+
+The threshold is deliberately above the 16-year floor that Art. 8 GDPR sets for
+Germany. Contributing here means consenting to permanent publication of your own
+words under an open licence, and that is a decision we would rather only adults
+make.
 
 ## 10. Changes
 

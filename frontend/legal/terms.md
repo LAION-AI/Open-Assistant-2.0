@@ -24,7 +24,7 @@ and no guarantee of availability.
 
 ## 2. Who may use it
 
-You must be **at least 16 years old**. One account per person; accounts are
+You must be **at least 18 years old**. One account per person; accounts are
 personal and must not be shared or transferred. You are responsible for
 everything that happens under your account, and for keeping your credentials,
 passkeys, recovery codes and API keys secure.

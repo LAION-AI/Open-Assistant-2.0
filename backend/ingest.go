@@ -81,6 +81,39 @@ func (c *credStore) userIDForKey(rawKey string) (string, bool) {
 	return id, true
 }
 
+// uploadAllowed mirrors the frontend's upload gate: an account whose only
+// credential is a password must add a second factor before it may contribute.
+// Enforced here too, because an API key would otherwise walk straight past the
+// check the UI makes.
+//
+// Fails closed. If the consent/credential store cannot be read, the answer is
+// "no": refusing an upload is recoverable, accepting one under an unverified
+// identity is not.
+func (c *credStore) uploadAllowed(userID string) bool {
+	h, err := c.handle()
+	if err != nil {
+		log.Printf("ingest: cannot check upload eligibility for %s: %v", userID, err)
+		return false
+	}
+
+	// A passkey is hardware-bound and already multi-factor.
+	var passkeys int
+	if err := h.QueryRow(`SELECT COUNT(*) FROM credentials WHERE user_id = ?`, userID).Scan(&passkeys); err != nil {
+		log.Printf("ingest: cannot count passkeys for %s: %v", userID, err)
+		return false
+	}
+	if passkeys > 0 {
+		return true
+	}
+
+	var method sql.NullString
+	if err := h.QueryRow(`SELECT twofa_method FROM users WHERE id = ?`, userID).Scan(&method); err != nil {
+		log.Printf("ingest: cannot read 2FA state for %s: %v", userID, err)
+		return false
+	}
+	return method.Valid && method.String != ""
+}
+
 // makeIngestHandler authenticates uploads with the read-only credential store
 // and writes them straight to logs.db — no frontend hop. This is the only
 // backend route intended to be publicly reachable (via a scoped Caddy path);
@@ -111,6 +144,12 @@ func makeIngestHandler(repo db.LogRepository, creds *credStore) http.HandlerFunc
 		userID, ok := creds.userIDForKey(key)
 		if !ok {
 			http.Error(w, `{"error":"invalid api key"}`, http.StatusUnauthorized)
+			return
+		}
+		if !creds.uploadAllowed(userID) {
+			http.Error(w,
+				`{"error":"two-factor authentication required before uploading: add a second factor or a passkey in Settings"}`,
+				http.StatusForbidden)
 			return
 		}
 

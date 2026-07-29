@@ -53,7 +53,7 @@ export function ConsentCheckboxes({ value, onChange, disabled }: ConsentCheckbox
           <a href="/privacy" target="_blank" className="text-indigo-400 hover:underline">
             Privacy Policy
           </a>
-          . I am at least 16 years old. <span className="text-muted-foreground/70">(required)</span>
+          . I am at least 18 years old. <span className="text-muted-foreground/70">(required)</span>
         </span>
       </label>
 

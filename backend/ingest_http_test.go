@@ -24,9 +24,12 @@ func TestIngestHandlerEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer w.Close()
-	w.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, api_key TEXT)`)
+	// Mirrors the frontend schema closely enough for the upload gate: an account
+	// needs a passkey or a second factor before it may ingest.
+	w.Exec(`CREATE TABLE users (id TEXT PRIMARY KEY, api_key TEXT, twofa_method TEXT)`)
+	w.Exec(`CREATE TABLE credentials (id TEXT PRIMARY KEY, user_id TEXT)`)
 	sum := sha256.Sum256([]byte("oa-abc"))
-	w.Exec(`INSERT INTO users (id, api_key) VALUES (?, ?)`, "u1", hex.EncodeToString(sum[:]))
+	w.Exec(`INSERT INTO users (id, api_key, twofa_method) VALUES (?, ?, ?)`, "u1", hex.EncodeToString(sum[:]), "totp")
 	creds := newCredStore(credPath)
 	if _, err := creds.handle(); err != nil {
 		t.Fatal(err)

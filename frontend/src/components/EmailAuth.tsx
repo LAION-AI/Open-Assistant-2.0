@@ -13,9 +13,25 @@ function resetTokenFromUrl(): string | null {
   return new URLSearchParams(window.location.search).get("reset");
 }
 
-export function EmailAuth({ onAuthed }: { onAuthed: (user: any) => void }) {
+export function EmailAuth({
+  onAuthed,
+  startMode = "menu",
+  showDivider = true,
+  onExit,
+}: {
+  onAuthed: (user: any) => void;
+  /**
+   * Passkeys are the default path, so the caller decides whether email is even
+   * on screen. Passing "login" or "register" opens straight into that form —
+   * the caller has already asked the question this component's menu would ask.
+   */
+  startMode?: "menu" | "login" | "register";
+  showDivider?: boolean;
+  /** Back out of email entirely, returning to the passkey path. */
+  onExit?: () => void;
+}) {
   const initialReset = resetTokenFromUrl();
-  const [mode, setMode] = useState<Mode>(initialReset ? "reset" : "menu");
+  const [mode, setMode] = useState<Mode>(initialReset ? "reset" : startMode);
   const [consent, setConsent] = useState<ConsentState>(EMPTY_CONSENT);
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
@@ -163,7 +179,11 @@ export function EmailAuth({ onAuthed }: { onAuthed: (user: any) => void }) {
     </Button>
   );
   const backBtn = (
-    <button type="button" onClick={() => reset("menu")} className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1">
+    <button
+      type="button"
+      onClick={() => (startMode === "menu" ? reset("menu") : onExit?.())}
+      className="text-[11px] text-muted-foreground hover:text-foreground flex items-center gap-1"
+    >
       <ArrowLeft className="w-3 h-3" /> Back
     </button>
   );
@@ -239,11 +259,24 @@ export function EmailAuth({ onAuthed }: { onAuthed: (user: any) => void }) {
 
   return (
     <div className="space-y-3">
-      <div className="relative flex items-center gap-3 py-1">
-        <div className="flex-1 h-px bg-border/60" />
-        <span className="text-[10px] uppercase tracking-widest text-muted-foreground/70">or use email</span>
-        <div className="flex-1 h-px bg-border/60" />
-      </div>
+      {showDivider && (
+        <div className="relative flex items-center gap-3 py-1">
+          <div className="flex-1 h-px bg-border/60" />
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground/70">or use email</span>
+          <div className="flex-1 h-px bg-border/60" />
+        </div>
+      )}
+
+      {mode === "register" && (
+        <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 text-amber-300/90 text-[11px] rounded-xl flex items-start gap-2 leading-relaxed">
+          <ShieldCheck className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+          <span>
+            A password account needs <strong>two-factor authentication</strong> before you can
+            upload your first trace. You can set it up in Settings right after signing in — or
+            go back and use a passkey, which is already two factors.
+          </span>
+        </div>
+      )}
 
       {mode === "menu" && (
         <div className="space-y-2">
