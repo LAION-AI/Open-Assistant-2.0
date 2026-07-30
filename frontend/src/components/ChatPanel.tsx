@@ -12,6 +12,18 @@ import {
 } from "../lib/chat";
 import { loadRedactor, redactMessages } from "../lib/redact";
 import {
+  describeOnDeviceProgress,
+  disposeOnDeviceModel,
+  getLoadedOnDeviceModelId,
+  getOnDeviceModel,
+  loadOnDeviceModel,
+  ON_DEVICE_MODELS,
+  onDeviceModelFromLogName,
+  resetOnDeviceModel,
+  streamOnDeviceResponse,
+  type OnDeviceModelId,
+} from "../lib/on-device-models";
+import {
   Send,
   Image as ImageIcon,
   AlertCircle,
@@ -24,14 +36,11 @@ import {
   MessageSquare,
   Loader2,
   ShieldCheck,
-  ExternalLink,
   Settings2,
   Sprout,
   Sparkles,
+  Square,
 } from "lucide-react";
-
-const BONSAI_WEBGPU_URL = "https://huggingface.co/spaces/webml-community/bonsai-webgpu-kernels";
-const GEMMA_WEBGPU_URL = "https://huggingface.co/spaces/webml-community/gemma-4-webgpu-kernels";
 
 interface Message {
   id: string;
@@ -81,6 +90,11 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [redacting, setRedacting] = useState(false);
   const [redactStatus, setRedactStatus] = useState<string | null>(null);
+  const [onDeviceModelId, setOnDeviceModelId] = useState<OnDeviceModelId | null>(null);
+  const [onDeviceReady, setOnDeviceReady] = useState(false);
+  const [onDeviceLoading, setOnDeviceLoading] = useState(false);
+  const [onDeviceStatus, setOnDeviceStatus] = useState<string | null>(null);
+  const [onDeviceFraction, setOnDeviceFraction] = useState<number | undefined>();
 
   // Model selection (populated from the endpoint's /v1/models)
   const [models, setModels] = useState<string[]>([]);
@@ -96,8 +110,21 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const modelLoadControllerRef = useRef<AbortController | null>(null);
+  const modelLoadPromiseRef = useRef<Promise<void> | null>(null);
+  const modelLoadSequenceRef = useRef(0);
+  const generationControllerRef = useRef<AbortController | null>(null);
 
   const hasV1Endpoint = !!user.byoeUrl?.trim();
+  const activeOnDeviceModel = onDeviceModelId ? getOnDeviceModel(onDeviceModelId) : null;
+  const canChat = onDeviceModelId ? onDeviceReady : hasV1Endpoint;
+  const activeModelName = activeOnDeviceModel?.logModel || model;
+  const remoteModelOptions = models.length
+    ? models
+    : hasV1Endpoint
+      ? [model || user.byoeModel || ""]
+      : [];
+  const modelSelectValue = onDeviceModelId ? `local:${onDeviceModelId}` : hasV1Endpoint ? `remote:${model}` : "";
 
   // Auto-scroll to bottom of messages
   useEffect(() => {
@@ -130,7 +157,7 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
   useEffect(() => {
     if (!hasV1Endpoint) {
       setModels([]);
-      setModel("");
+      if (!onDeviceModelId) setModel("");
       return;
     }
 
@@ -155,7 +182,89 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
       });
   }, [hasV1Endpoint, user.byoeUrl, user.byoeKey]);
 
+  useEffect(() => {
+    return () => {
+      modelLoadSequenceRef.current += 1;
+      modelLoadControllerRef.current?.abort();
+      generationControllerRef.current?.abort();
+      const pending = modelLoadPromiseRef.current;
+      if (pending) {
+        void pending.finally(disposeOnDeviceModel).catch(() => {});
+      } else {
+        disposeOnDeviceModel();
+      }
+    };
+  }, []);
+
+  const activateOnDeviceModel = async (id: OnDeviceModelId) => {
+    if (id === onDeviceModelId && (onDeviceLoading || onDeviceReady)) return;
+
+    const sequence = ++modelLoadSequenceRef.current;
+    modelLoadControllerRef.current?.abort();
+    generationControllerRef.current?.abort();
+    setOnDeviceModelId(id);
+    setOnDeviceReady(false);
+    setOnDeviceLoading(true);
+    setOnDeviceStatus("Preparing model download…");
+    setOnDeviceFraction(undefined);
+    setImage(null);
+    setError(null);
+
+    const previous = modelLoadPromiseRef.current;
+    if (previous) await previous.catch(() => {});
+    if (sequence !== modelLoadSequenceRef.current) return;
+
+    const controller = new AbortController();
+    modelLoadControllerRef.current = controller;
+    const promise = loadOnDeviceModel(id, {
+      signal: controller.signal,
+      onProgress: event => {
+        if (sequence !== modelLoadSequenceRef.current) return;
+        const progress = describeOnDeviceProgress(event);
+        setOnDeviceStatus(progress.label);
+        setOnDeviceFraction(progress.fraction);
+      },
+    });
+    modelLoadPromiseRef.current = promise;
+
+    try {
+      await promise;
+      if (sequence !== modelLoadSequenceRef.current || controller.signal.aborted) return;
+      setOnDeviceReady(getLoadedOnDeviceModelId() === id);
+      setOnDeviceStatus("Ready · inference stays on this device");
+      setOnDeviceFraction(1);
+    } catch (err: any) {
+      if (controller.signal.aborted || sequence !== modelLoadSequenceRef.current) return;
+      setOnDeviceStatus(null);
+      setError(err?.message || `Failed to load ${getOnDeviceModel(id).label}`);
+    } finally {
+      if (sequence === modelLoadSequenceRef.current) {
+        setOnDeviceLoading(false);
+        if (modelLoadPromiseRef.current === promise) modelLoadPromiseRef.current = null;
+      }
+    }
+  };
+
+  const activateRemoteModel = async (nextModel: string) => {
+    const sequence = ++modelLoadSequenceRef.current;
+    modelLoadControllerRef.current?.abort();
+    generationControllerRef.current?.abort();
+    const previous = modelLoadPromiseRef.current;
+    if (previous) await previous.catch(() => {});
+    if (sequence !== modelLoadSequenceRef.current) return;
+    disposeOnDeviceModel();
+    setOnDeviceModelId(null);
+    setOnDeviceReady(false);
+    setOnDeviceLoading(false);
+    setOnDeviceStatus(null);
+    setOnDeviceFraction(undefined);
+    setModel(nextModel);
+    setError(null);
+  };
+
   const newChat = () => {
+    generationControllerRef.current?.abort();
+    resetOnDeviceModel();
     setMessages([]);
     setError(null);
     setInput("");
@@ -175,7 +284,12 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
     // Reuse the chat's id so follow-ups append to it. Legacy rows (no id) get a
     // fresh id since they can't be appended to retroactively.
     setConversationId(conv.conversationId || crypto.randomUUID());
-    if (conv.model) setModel(conv.model); // preserve model for redaction/replies
+    const localModel = onDeviceModelFromLogName(conv.model);
+    if (localModel) {
+      void activateOnDeviceModel(localModel.id);
+    } else if (conv.model) {
+      void activateRemoteModel(conv.model);
+    }
     setError(null);
     setInput("");
     setRedactStatus(null);
@@ -203,7 +317,7 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           conversationId,
-          model,
+          model: activeModelName,
           messages: redacted.map((m: any) => ({
             role: m.role,
             content: m.content,
@@ -249,15 +363,24 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!hasV1Endpoint) {
-      setError("Configure a V1-compatible endpoint before starting a chat.");
+    if (!canChat) {
+      setError(
+        onDeviceModelId
+          ? `Finish loading ${getOnDeviceModel(onDeviceModelId).label} before chatting.`
+          : "Choose an on-device model or configure a V1-compatible endpoint before starting a chat.",
+      );
       return;
     }
     if (!input.trim() && !image) return;
     if (loading) return;
+    if (onDeviceModelId && image) {
+      setError("The built-in Bonsai and Gemma runners currently support text chat only.");
+      return;
+    }
 
     setError(null);
     setLoading(true);
+    const localModelForRequest = onDeviceModelId;
 
     const userMsgId = crypto.randomUUID();
     const newUserMsg: Message = {
@@ -314,12 +437,60 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
     }
 
     const assistantMsgId = crypto.randomUUID();
+    const controller = new AbortController();
+    generationControllerRef.current = controller;
     setStreamingId(assistantMsgId);
     setMessages(prev => [...prev, { id: assistantMsgId, role: "assistant", content: "", reasoning: "" }]);
 
+    let receivedContent = false;
+    let localResponse = "";
+
+    const saveLocalConversation = async (responseText: string) => {
+      if (!localModelForRequest || !responseText) return;
+      const response = await fetch("/api/chat/local", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId,
+          model: getOnDeviceModel(localModelForRequest).logModel,
+          messages: [...apiMessages, { role: "assistant", content: responseText }],
+        }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || `Server responded with status ${response.status}`);
+      }
+    };
+
     try {
+      if (localModelForRequest) {
+        const runtimeMessages = apiMessages.map(message => ({
+          role: message.role as "user" | "assistant",
+          content: typeof message.content === "string" ? message.content : "",
+        }));
+        for await (const delta of streamOnDeviceResponse(localModelForRequest, runtimeMessages, {
+          signal: controller.signal,
+        })) {
+          if (!delta) continue;
+          receivedContent = true;
+          localResponse += delta;
+          setMessages(prev =>
+            prev.map(msg => (msg.id === assistantMsgId ? { ...msg, content: msg.content + delta } : msg)),
+          );
+        }
+
+        try {
+          await saveLocalConversation(localResponse);
+          fetchHistory();
+        } catch (logError: any) {
+          setError(`Response generated on-device, but saving it failed: ${logError?.message || logError}`);
+        }
+        return;
+      }
+
       const response = await fetch("/api/chat", {
         method: "POST",
+        signal: controller.signal,
         headers: {
           "Content-Type": "application/json",
           "X-Conversation-Id": conversationId,
@@ -365,6 +536,7 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
               const chunk = parsed.choices?.[0]?.delta?.content || "";
               const reasoningChunk = parsed.choices?.[0]?.delta?.reasoning_content || "";
               if (chunk || reasoningChunk) {
+                receivedContent = true;
                 setMessages(prev =>
                   prev.map(msg =>
                     msg.id === assistantMsgId
@@ -388,14 +560,30 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
       onRefreshUser();
       fetchHistory();
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || "Failed to fetch response");
-      // Remove empty assistant message if it failed before streaming
-      setMessages(prev => prev.filter(msg => msg.id !== assistantMsgId));
+      const aborted = controller.signal.aborted || err?.name === "AbortError";
+      if (aborted && localModelForRequest && localResponse) {
+        try {
+          await saveLocalConversation(localResponse);
+          fetchHistory();
+        } catch (logError: any) {
+          setError(`Generation stopped, but saving the partial response failed: ${logError?.message || logError}`);
+        }
+      } else if (!aborted) {
+        console.error(err);
+        setError(err.message || "Failed to fetch response");
+      }
+      if (!receivedContent) {
+        setMessages(prev => prev.filter(msg => msg.id !== assistantMsgId));
+      }
     } finally {
       setLoading(false);
       setStreamingId(null);
+      if (generationControllerRef.current === controller) generationControllerRef.current = null;
     }
+  };
+
+  const stopGeneration = () => {
+    generationControllerRef.current?.abort();
   };
 
   const toggleThinking = (id: string) => {
@@ -481,7 +669,15 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
         {/* Panel Header */}
         <div className="flex min-w-0 items-center justify-between gap-2 px-3 sm:px-6 py-2.5 sm:py-3.5 border-b border-border/70 bg-card/50">
           <div className="flex items-center gap-2 min-w-0">
-            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${hasV1Endpoint ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground/40"}`}></div>
+            <div
+              className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                onDeviceLoading
+                  ? "bg-amber-400 animate-pulse"
+                  : canChat
+                    ? "bg-emerald-500 animate-pulse"
+                    : "bg-muted-foreground/40"
+              }`}
+            ></div>
             <span className="font-semibold text-sm text-foreground truncate">
               {messages.length > 0 ? "Conversation" : "New chat"}
             </span>
@@ -508,24 +704,48 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
                 <span className="hidden sm:inline">{redacting ? "Redacting…" : "Redact"}</span>
               </button>
             )}
-            {models.length > 0 && (
-              <select
-                value={model}
-                onChange={e => setModel(e.target.value)}
-                title="Model — switch on the fly"
-                className="h-8 min-w-0 w-24 min-[400px]:w-28 sm:w-auto sm:max-w-[200px] rounded-lg border border-border/70 bg-background/60 px-1.5 sm:px-2 text-[11px] sm:text-xs text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-              >
-                {models.map(m => (
-                  <option key={m} value={m}>
-                    {m}
+            <select
+              value={modelSelectValue}
+              onChange={e => {
+                const value = e.target.value;
+                if (value.startsWith("local:")) {
+                  void activateOnDeviceModel(value.slice("local:".length) as OnDeviceModelId);
+                } else if (value.startsWith("remote:")) {
+                  void activateRemoteModel(value.slice("remote:".length));
+                }
+              }}
+              disabled={loading}
+              title="Choose an on-device model or your V1 endpoint"
+              className="h-8 min-w-0 w-32 min-[440px]:w-40 sm:w-auto sm:max-w-[240px] rounded-lg border border-border/70 bg-background/60 px-1.5 sm:px-2 text-[11px] sm:text-xs text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
+            >
+              {!modelSelectValue && <option value="">Choose model…</option>}
+              <optgroup label="On-device WebGPU">
+                {ON_DEVICE_MODELS.map(item => (
+                  <option key={item.id} value={`local:${item.id}`}>
+                    {item.label} · {item.detail.split(" · ")[0]}
                   </option>
                 ))}
-              </select>
-            )}
-            {hasV1Endpoint && (
-              <div className="flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                <Server className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">V1 endpoint</span>
+              </optgroup>
+              {hasV1Endpoint && (
+                <optgroup label="V1 endpoint">
+                  {remoteModelOptions.map((remoteModel, index) => (
+                    <option key={remoteModel || `default-${index}`} value={`remote:${remoteModel}`}>
+                      {remoteModel || "Endpoint default"}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+            {(onDeviceModelId || hasV1Endpoint) && (
+              <div
+                className={`hidden items-center gap-1.5 rounded-full border px-2 py-1.5 sm:flex ${
+                  onDeviceModelId
+                    ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
+                    : "border-indigo-500/20 bg-indigo-500/10 text-indigo-400"
+                }`}
+              >
+                {onDeviceModelId ? <Sprout className="w-3.5 h-3.5" /> : <Server className="w-3.5 h-3.5" />}
+                <span>{onDeviceModelId ? "On-device" : "V1 endpoint"}</span>
               </div>
             )}
           </div>
@@ -533,7 +753,7 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
 
         {/* Messages Scroll Area */}
         <div className="flex-1 min-h-0 min-w-0 px-3 sm:px-6 py-4 sm:py-6 overflow-x-hidden overflow-y-auto overscroll-contain space-y-4 sm:space-y-6">
-          {messages.length === 0 && !hasV1Endpoint ? (
+          {messages.length === 0 && !canChat ? (
             <div className="h-full flex flex-col items-center justify-center p-3 sm:p-8">
               <div className="w-full max-w-xl overflow-hidden rounded-3xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/10 via-card/80 to-indigo-500/10 p-5 text-left shadow-xl sm:p-7">
                 <div className="mb-5 flex items-start gap-3">
@@ -550,47 +770,95 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
                   </div>
                 </div>
                 <p className="text-sm leading-relaxed text-muted-foreground">
-                  Launch a browser-native runner in an isolated tab or connect an OpenAI V1-compatible endpoint.
-                  WebGPU runners cache their weights locally, and inference stays on your device.
+                  Load a browser-native model directly in Open Assistant, or connect an OpenAI V1-compatible endpoint.
+                  Weights cache locally after the first download and inference stays on your device.
                 </p>
                 <div className="mt-5 grid gap-2.5 sm:grid-cols-2">
-                  <a
-                    href={BONSAI_WEBGPU_URL}
-                    target="_blank"
-                    rel="noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => void activateOnDeviceModel("bonsai-27b-q1")}
+                    disabled={loading}
                     className="group flex min-h-16 items-center gap-3 rounded-xl bg-emerald-600 px-4 py-3 text-left text-white shadow-lg shadow-emerald-600/15 transition hover:bg-emerald-500"
                   >
                     <Sprout className="h-5 w-5 flex-shrink-0" />
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-semibold">Bonsai 27B 1-bit</span>
-                      <span className="block text-[10px] font-medium text-white/75">3.80 GB · browser WebGPU</span>
+                      <span className="block text-[10px] font-medium text-white/75">
+                        {onDeviceModelId === "bonsai-27b-q1" && onDeviceLoading ? "Loading…" : "3.80 GB · load with WebGPU"}
+                      </span>
                     </span>
-                    <ExternalLink className="h-3.5 w-3.5 flex-shrink-0 opacity-70 transition group-hover:opacity-100" />
-                  </a>
-                  <a
-                    href={GEMMA_WEBGPU_URL}
-                    target="_blank"
-                    rel="noreferrer"
+                    {onDeviceModelId === "bonsai-27b-q1" && onDeviceLoading && (
+                      <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin" />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void activateOnDeviceModel("gemma-4-e2b")}
+                    disabled={loading}
                     className="group flex min-h-16 items-center gap-3 rounded-xl bg-indigo-600 px-4 py-3 text-left text-white shadow-lg shadow-indigo-600/15 transition hover:bg-indigo-500"
                   >
                     <Sparkles className="h-5 w-5 flex-shrink-0" />
                     <span className="min-w-0 flex-1">
                       <span className="block text-sm font-semibold">Gemma 4 E2B</span>
-                      <span className="block text-[10px] font-medium text-white/75">2.46 GB · browser WebGPU</span>
+                      <span className="block text-[10px] font-medium text-white/75">
+                        {onDeviceModelId === "gemma-4-e2b" && onDeviceLoading ? "Loading…" : "2.49 GB · load with WebGPU"}
+                      </span>
                     </span>
-                    <ExternalLink className="h-3.5 w-3.5 flex-shrink-0 opacity-70 transition group-hover:opacity-100" />
-                  </a>
+                    {onDeviceModelId === "gemma-4-e2b" && onDeviceLoading && (
+                      <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin" />
+                    )}
+                  </button>
                 </div>
+                {onDeviceModelId && onDeviceStatus && (
+                  <div className="mt-4 rounded-xl border border-border/70 bg-background/45 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-3 text-[11px]">
+                      <span className="min-w-0 truncate font-medium text-foreground">{onDeviceStatus}</span>
+                      {onDeviceFraction !== undefined && (
+                        <span className="flex-shrink-0 font-mono text-muted-foreground">
+                          {Math.round(onDeviceFraction * 100)}%
+                        </span>
+                      )}
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-indigo-500 transition-[width] duration-200"
+                        style={{ width: `${Math.round((onDeviceFraction ?? 0.03) * 100)}%` }}
+                      />
+                    </div>
+                    <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
+                      Keep this tab open. The download is cached by your browser for future sessions.
+                    </p>
+                  </div>
+                )}
+                {hasV1Endpoint && (
+                  <button
+                    type="button"
+                    onClick={() => void activateRemoteModel(model)}
+                    className="mt-4 w-full text-center text-xs font-medium text-indigo-400 hover:text-indigo-300"
+                  >
+                    Use configured V1 endpoint instead
+                  </button>
+                )}
               </div>
             </div>
           ) : messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-4 sm:p-8 space-y-4 max-w-md mx-auto">
-              <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center border border-indigo-500/20 text-indigo-400">
-                <Server className="w-6 h-6" />
+              <div
+                className={`w-12 h-12 rounded-2xl flex items-center justify-center border ${
+                  onDeviceModelId
+                    ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
+                    : "border-indigo-500/20 bg-indigo-500/10 text-indigo-400"
+                }`}
+              >
+                {onDeviceModelId ? <Sprout className="w-6 h-6" /> : <Server className="w-6 h-6" />}
               </div>
-              <h3 className="font-bold text-lg text-foreground">Crowdsource AI Data</h3>
+              <h3 className="font-bold text-lg text-foreground">
+                {activeOnDeviceModel ? `${activeOnDeviceModel.label} is ready` : "Crowdsource AI Data"}
+              </h3>
               <p className="text-sm text-muted-foreground leading-relaxed">
-                Start chatting. If configured, your queries will run through your custom LLM endpoint, and conversations are safely collected for the training of future open models.
+                {activeOnDeviceModel
+                  ? "Generation runs locally through WebGPU. Conversations you submit are saved to your contribution history under the selected local model."
+                  : "Start chatting through your custom LLM endpoint. Conversations are safely collected for training future open models."}
               </p>
             </div>
           ) : (
@@ -726,7 +994,7 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
         )}
 
         {/* Input Form Area */}
-        {hasV1Endpoint ? (
+        {canChat ? (
           <form
             onSubmit={handleSubmit}
             className="px-3 sm:px-6 py-3 sm:py-4 border-t border-border/70 bg-card/50 flex min-w-0 items-end gap-2 sm:gap-3"
@@ -743,8 +1011,9 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
             variant="outline"
             size="icon"
             onClick={() => fileInputRef.current?.click()}
+            disabled={!!onDeviceModelId || loading}
             className="h-10 w-10 flex-shrink-0 rounded-xl hover:bg-muted/80"
-            title="Attach Image Payload"
+            title={onDeviceModelId ? "Built-in models currently support text chat only" : "Attach Image Payload"}
           >
             <ImageIcon className="w-4 h-4 text-muted-foreground" />
           </Button>
@@ -762,37 +1031,44 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
             }}
           />
 
-          <Button
-            type="submit"
-            disabled={(!input.trim() && !image) || loading}
-            className="h-10 w-10 flex-shrink-0 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-indigo-600/45 disabled:text-white/60"
-          >
-            <Send className="w-4 h-4" />
-          </Button>
+          {loading ? (
+            <Button
+              type="button"
+              onClick={stopGeneration}
+              className="h-10 w-10 flex-shrink-0 rounded-xl bg-rose-600 text-white hover:bg-rose-500"
+              title="Stop generation"
+            >
+              <Square className="w-3.5 h-3.5 fill-current" />
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              disabled={!input.trim() && !image}
+              className="h-10 w-10 flex-shrink-0 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white disabled:bg-indigo-600/45 disabled:text-white/60"
+            >
+              <Send className="w-4 h-4" />
+            </Button>
+          )}
           </form>
         ) : (
           <div className="border-t border-border/70 bg-card/50 px-3 py-3 sm:px-6 sm:py-4">
             <div className="grid gap-2 sm:grid-cols-2">
-              <a
-                href={BONSAI_WEBGPU_URL}
-                target="_blank"
-                rel="noreferrer"
+              <button
+                type="button"
+                onClick={() => void activateOnDeviceModel("bonsai-27b-q1")}
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-emerald-600 px-3 text-xs font-semibold text-white transition hover:bg-emerald-500"
               >
                 <Sprout className="h-4 w-4" />
-                Run Bonsai in browser
-                <ExternalLink className="h-3.5 w-3.5 opacity-70" />
-              </a>
-              <a
-                href={GEMMA_WEBGPU_URL}
-                target="_blank"
-                rel="noreferrer"
+                {onDeviceModelId === "bonsai-27b-q1" && onDeviceLoading ? "Loading Bonsai…" : "Load Bonsai on-device"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void activateOnDeviceModel("gemma-4-e2b")}
                 className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-3 text-xs font-semibold text-white transition hover:bg-indigo-500"
               >
                 <Sparkles className="h-4 w-4" />
-                Run Gemma 4 in browser
-                <ExternalLink className="h-3.5 w-3.5 opacity-70" />
-              </a>
+                {onDeviceModelId === "gemma-4-e2b" && onDeviceLoading ? "Loading Gemma 4…" : "Load Gemma 4 on-device"}
+              </button>
               <Button
                 type="button"
                 variant="outline"
@@ -800,9 +1076,23 @@ export function ChatPanel({ user, onRefreshUser, onNavigate }: ChatPanelProps) {
                 className="h-10 rounded-xl text-xs font-semibold sm:col-span-2"
               >
                 <Settings2 className="mr-2 h-4 w-4" />
-                Configure a V1 endpoint instead
+                {hasV1Endpoint ? "Use or change the V1 endpoint" : "Configure a V1 endpoint instead"}
               </Button>
             </div>
+            {onDeviceModelId && onDeviceStatus && (
+              <div className="mt-3">
+                <div className="mb-1.5 flex items-center justify-between gap-3 text-[10px] text-muted-foreground">
+                  <span className="truncate">{onDeviceStatus}</span>
+                  {onDeviceFraction !== undefined && <span>{Math.round(onDeviceFraction * 100)}%</span>}
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-indigo-500 transition-[width] duration-200"
+                    style={{ width: `${Math.round((onDeviceFraction ?? 0.03) * 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

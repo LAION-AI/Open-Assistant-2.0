@@ -52,6 +52,7 @@ import pkg from "../package.json" with { type: "json" };
 export const APP_VERSION: string = pkg.version;
 
 const RP_NAME = "Open Assistant 2.0";
+const ON_DEVICE_CHAT_MODELS = new Set(["local/bonsai-27b-q1", "local/gemma-4-e2b"]);
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8080";
 
@@ -2608,6 +2609,57 @@ const server = serve({
         return Response.json(await response.json());
       } catch (err: any) {
         console.error("Error deleting logs:", err);
+        return Response.json({ error: err.message }, { status: 500 });
+      }
+    },
+
+    // Persist a response that was generated entirely in the browser. The
+    // authenticated Bun layer supplies the trusted user id; the browser may
+    // only name one of the bundled on-device models.
+    "/api/chat/local": async req => {
+      try {
+        if (req.method !== "POST") return Response.json({ error: "Method not allowed" }, { status: 405 });
+        const cookies = parseCookies(req.headers.get("cookie"));
+        const sessionToken = cookies["session"];
+        if (!sessionToken) return Response.json({ error: "Unauthorized" }, { status: 401 });
+        const payload = await verifySessionToken(sessionToken);
+        if (!payload) return Response.json({ error: "Invalid session" }, { status: 401 });
+
+        const body = await req.json().catch(() => ({}));
+        const model = typeof body?.model === "string" ? body.model.trim() : "";
+        const conversationId =
+          typeof body?.conversationId === "string" ? body.conversationId.trim().slice(0, 128) : "";
+        const messages = Array.isArray(body?.messages) ? body.messages : [];
+        if (!ON_DEVICE_CHAT_MODELS.has(model)) {
+          return Response.json({ error: "Unsupported on-device model" }, { status: 400 });
+        }
+        if (!conversationId || messages.length < 2 || messages.length > 200) {
+          return Response.json({ error: "A conversation id and 2–200 messages are required" }, { status: 400 });
+        }
+        if (JSON.stringify(messages).length > 2_000_000) {
+          return Response.json({ error: "Conversation is too large" }, { status: 413 });
+        }
+
+        const { prompt, response, tokens } = buildStoredPayload(model, messages);
+        const backendResponse = await fetch(`${BACKEND_URL}/api/log-interaction`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: payload.userId,
+            conversationId,
+            platform: "chat",
+            prompt,
+            response,
+            tokens,
+          }),
+        });
+        if (!backendResponse.ok) {
+          const text = await backendResponse.text();
+          throw new Error(`Go backend returned error: ${text}`);
+        }
+        return Response.json({ success: true });
+      } catch (err: any) {
+        console.error("Error saving on-device chat:", err);
         return Response.json({ error: err.message }, { status: 500 });
       }
     },
